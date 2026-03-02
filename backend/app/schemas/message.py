@@ -1,0 +1,35 @@
+from typing import Literal
+from pydantic import BaseModel, Field
+
+from app.schemas.common import EdgePayload, NodePayload
+
+
+class ContinueMessageRequest(BaseModel):
+    graph_id: str
+    continue_from_node_id: str | None = None
+    user_text: str = Field(min_length=1)
+    mode: Literal["normal", "elaboration"] = "normal"
+    highlighted_text: str | None = None
+
+
+class ContinueChatRequest(BaseModel):
+    graph_id: str
+    anchor_node_id: str
+    user_text: str = Field(min_length=1)
+
+
+class ContinueResponse(BaseModel):
+    created_user_node: NodePayload
+    created_assistant_node: NodePayload
+    created_edges: list[EdgePayload]
+    response_source: Literal["live", "fallback"]
+    transcript_window: list[dict[str, str]] | None = None
+
+
+class SetApiKeyRequest(BaseModel):
+    api_key: str = Field(min_length=10)
+
+
+class UpdateVariantRequest(BaseModel):
+    variant_index: int = Field(ge=0, le=2)
+

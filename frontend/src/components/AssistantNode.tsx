@@ -1,0 +1,99 @@
+import { memo, useLayoutEffect, useRef, useState } from "react";
+import { Handle, Position, type NodeProps } from "reactflow";
+
+import type { NodeData } from "../store/useGraphStore";
+
+interface AssistantNodeData extends NodeData {
+  onCycleVariant?: (nodeId: string, direction: -1 | 1) => void;
+  onSelectElaboration?: (nodeId: string, text: string, x: number, y: number) => void;
+  onOpenPanel?: (nodeId: string) => void;
+}
+
+function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
+  const measureRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLParagraphElement>(null);
+  const [size, setSize] = useState({ w: 360, h: 140 });
+
+  useLayoutEffect(() => {
+    if (!measureRef.current) {
+      return;
+    }
+    const nextW = Math.min(880, Math.max(280, measureRef.current.scrollWidth + 44));
+    const nextH = Math.min(680, Math.max(110, measureRef.current.scrollHeight + 62));
+    setSize({ w: nextW, h: nextH });
+  }, [data.text]);
+
+  const handleMouseUp = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return;
+    }
+    const text = selection.toString().trim();
+    if (!text || !contentRef.current || !contentRef.current.contains(selection.anchorNode)) {
+      return;
+    }
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    data.onSelectElaboration?.(id, text, rect.left + rect.width / 2, rect.top - 12);
+  };
+
+  return (
+    <div
+      className={`rounded-2xl border bg-white px-4 py-3 shadow-float transition-all duration-300 ${
+        selected ? "border-accent" : "border-stone-300"
+      }`}
+      style={{ width: size.w, height: size.h, transition: "width 260ms ease, height 260ms ease, border-color 200ms ease" }}
+    >
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-accent">Assistant</div>
+          <button
+            className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+            onClick={() => data.onCycleVariant?.(id, -1)}
+            type="button"
+            aria-label="Previous variant"
+          >
+            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M5 12L10 7L15 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+            onClick={() => data.onCycleVariant?.(id, 1)}
+            type="button"
+            aria-label="Next variant"
+          >
+            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M5 8L10 13L15 8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
+            onClick={() => data.onOpenPanel?.(id)}
+            type="button"
+            aria-label="Open context panel"
+            title="Open context panel"
+          >
+            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p ref={contentRef} onMouseUp={handleMouseUp} className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+        {data.text}
+      </p>
+      <div className="pointer-events-none absolute -z-10 opacity-0">
+        <p ref={measureRef} className="whitespace-pre-wrap text-sm leading-relaxed">
+          {data.text}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default memo(AssistantNode);

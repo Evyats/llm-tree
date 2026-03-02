@@ -1,1 +1,15 @@
 agent/
+infra/.env
+infra/postgres/data/*
+!infra/postgres/data/.gitkeep
+backend/.env
+frontend/.env
+backend/.pytest_cache/
+backend/__pycache__/
+backend/logs/*
+!backend/logs/.gitkeep
+**/__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
