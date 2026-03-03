@@ -5,6 +5,7 @@ import {
   FIXED_MIN_COL_GAP,
   FIXED_ROOT_SPREAD,
   FIXED_ROW_GAP,
+  FIXED_TREE_GAP,
   FIXED_X_STEP,
   ROOT_KEY,
 } from "./constants";
@@ -27,12 +28,17 @@ interface Position {
 }
 
 const FIXED_BASE_TOP = 100;
-const FIXED_LAYER_STEP = 145;
 
 export interface FixedLayoutResult {
   meta: Map<string, StructureMeta>;
   positions: Map<string, Position>;
   sizeById: Map<string, NodeSize>;
+}
+
+export interface FixedLayoutOptions {
+  rowGap?: number;
+  treeGap?: number;
+  siblingGap?: number;
 }
 
 function buildChildrenMap(nodes: Node<NodeData>[]) {
@@ -178,9 +184,14 @@ export function estimateNodeSize(node: Node<NodeData>): NodeSize {
 
 export function buildFixedPositions(
   nodes: Node<NodeData>[],
-  nodeSizes: Map<string, { width: number; height: number }>
+  nodeSizes: Map<string, { width: number; height: number }>,
+  options?: FixedLayoutOptions
 ): FixedLayoutResult {
+  const rowGap = options?.rowGap ?? FIXED_ROW_GAP;
+  const treeGap = options?.treeGap ?? FIXED_TREE_GAP;
+  const siblingGap = options?.siblingGap ?? FIXED_MIN_COL_GAP;
   const meta = buildStructureMeta(nodes);
+  const childrenByParent = buildChildrenMap(nodes);
   const positions = new Map<string, Position>();
   const sizeById = new Map(
     nodes.map((node) => {
@@ -196,22 +207,98 @@ export function buildFixedPositions(
     rowHeightByLayer.set(layer, Math.max(...rowNodes.map((node) => sizeById.get(node.id)?.height ?? 120), 120));
   }
 
-  // Row Y is now top-aligned per layer (not center-aligned), then relaxed
-  // with size-aware constraints to prevent overlaps while preserving layer order.
+  // Row Y is top-aligned and built with strict sequential spacing:
+  // every adjacent row pair gets the same configured edge gap.
   const rowTopByLayer = new Map<number, number>();
   for (let i = 0; i < rowIndexes.length; i += 1) {
     const layer = rowIndexes[i];
-    const desiredTop = FIXED_BASE_TOP + layer * FIXED_LAYER_STEP;
     if (i === 0) {
-      rowTopByLayer.set(layer, desiredTop);
+      rowTopByLayer.set(layer, FIXED_BASE_TOP);
       continue;
     }
     const prevLayer = rowIndexes[i - 1];
     const prevTop = rowTopByLayer.get(prevLayer) ?? FIXED_BASE_TOP;
     const prevHeight = rowHeightByLayer.get(prevLayer) ?? 120;
-    const minTop = prevTop + prevHeight + FIXED_ROW_GAP;
-    rowTopByLayer.set(layer, Math.max(desiredTop, minTop));
+    rowTopByLayer.set(layer, prevTop + prevHeight + rowGap);
   }
+
+  const packRowGroup = (
+    groupNodesRaw: Node<NodeData>[],
+    targetById: Map<string, number>,
+    anchorById: Map<string, boolean>,
+    rowTop: number
+  ) => {
+    const groupNodesWithTargets = groupNodesRaw.map((node) => {
+      const parentId = node.data.parentId;
+      const parentX = parentId ? positions.get(parentId)?.x : undefined;
+      return {
+        node,
+        targetX: targetById.get(node.id) ?? (meta.get(node.id)?.baseX ?? 0) * FIXED_X_STEP,
+        parentX: parentX ?? Number.NEGATIVE_INFINITY,
+        siblingOrder: meta.get(node.id)?.siblingOrder ?? 0,
+        anchored: anchorById.get(node.id) ?? false,
+      };
+    });
+    // Non-crossing preference:
+    // keep children grouped by parent X order, then preserve sibling order.
+    groupNodesWithTargets.sort((a, b) => {
+      if (a.parentX !== b.parentX) return a.parentX - b.parentX;
+      if (a.siblingOrder !== b.siblingOrder) return a.siblingOrder - b.siblingOrder;
+      return a.targetX - b.targetX;
+    });
+
+    const placedX = new Map<string, number>();
+    let prevCenterX: number | null = null;
+    let prevHalfW = 0;
+
+    for (let i = 0; i < groupNodesWithTargets.length; i += 1) {
+      const { node, targetX, anchored } = groupNodesWithTargets[i];
+      const size = sizeById.get(node.id) ?? { width: 280, height: 120 };
+      const halfW = size.width / 2;
+      let centerX = targetX;
+      if (prevCenterX !== null) {
+        const minCenter = prevCenterX + prevHalfW + halfW + siblingGap;
+        centerX = Math.max(centerX, minCenter);
+        if (anchored && centerX > targetX) {
+          const delta = centerX - targetX;
+          let leftBarrier = -1;
+          for (let k = i - 1; k >= 0; k -= 1) {
+            if (groupNodesWithTargets[k].anchored) {
+              leftBarrier = k;
+              break;
+            }
+          }
+          if (leftBarrier + 1 <= i - 1) {
+            for (let k = leftBarrier + 1; k <= i - 1; k += 1) {
+              const leftNodeId = groupNodesWithTargets[k].node.id;
+              placedX.set(leftNodeId, (placedX.get(leftNodeId) ?? 0) - delta);
+            }
+            centerX = targetX;
+          }
+        }
+      }
+      placedX.set(node.id, centerX);
+      prevCenterX = centerX;
+      prevHalfW = halfW;
+    }
+
+    const hasAnchors = groupNodesWithTargets.some((item) => item.anchored);
+    let shift = 0;
+    if (!hasAnchors) {
+      const desiredCenters = groupNodesWithTargets.map((item) => item.targetX);
+      const actualCenters = groupNodesWithTargets.map((item) => placedX.get(item.node.id) ?? 0);
+      const desiredMean = desiredCenters.reduce((sum, value) => sum + value, 0) / Math.max(desiredCenters.length, 1);
+      const actualMean = actualCenters.reduce((sum, value) => sum + value, 0) / Math.max(actualCenters.length, 1);
+      shift = desiredMean - actualMean;
+    }
+
+    for (const { node } of groupNodesWithTargets) {
+      positions.set(node.id, {
+        x: (placedX.get(node.id) ?? 0) + shift,
+        y: rowTop,
+      });
+    }
+  };
 
   for (const layer of rowIndexes) {
     const rowNodes = nodes.filter((node) => (meta.get(node.id)?.layer ?? 0) === layer);
@@ -225,37 +312,61 @@ export function buildFixedPositions(
 
     const rowTop = rowTopByLayer.get(layer) ?? FIXED_BASE_TOP;
     for (const [, groupNodesRaw] of byRoot) {
-      const groupNodes = [...groupNodesRaw].sort((a, b) => (meta.get(a.id)?.baseX ?? 0) - (meta.get(b.id)?.baseX ?? 0));
-      const placedX = new Map<string, number>();
-      let prevCenterX: number | null = null;
-      let prevHalfW = 0;
-
-      for (const node of groupNodes) {
-        const baseX = (meta.get(node.id)?.baseX ?? 0) * FIXED_X_STEP;
-        const size = sizeById.get(node.id) ?? { width: 280, height: 120 };
-        const halfW = size.width / 2;
-        let centerX = baseX;
-        if (prevCenterX !== null) {
-          const minCenter = prevCenterX + prevHalfW + halfW + FIXED_MIN_COL_GAP;
-          centerX = Math.max(centerX, minCenter);
+      const targetById = new Map<string, number>();
+      const anchorById = new Map<string, boolean>();
+      for (const node of groupNodesRaw) {
+        const parentId = node.data.parentId;
+        if (parentId) {
+          const siblings = childrenByParent.get(parentId) ?? [];
+          const sameRoleSiblings = siblings.filter((child) => child.data.role === node.data.role);
+          const isSingleContinuation = sameRoleSiblings.length === 1 && sameRoleSiblings[0]?.id === node.id;
+          const isOnlyChild = siblings.length === 1;
+          if (isSingleContinuation || isOnlyChild) {
+            const parentPos = positions.get(parentId);
+            if (parentPos) {
+              targetById.set(node.id, parentPos.x);
+              anchorById.set(node.id, true);
+              continue;
+            }
+          }
         }
-        placedX.set(node.id, centerX);
-        prevCenterX = centerX;
-        prevHalfW = halfW;
+        targetById.set(node.id, (meta.get(node.id)?.baseX ?? 0) * FIXED_X_STEP);
+        anchorById.set(node.id, false);
       }
+      packRowGroup(groupNodesRaw, targetById, anchorById, rowTop);
+    }
+  }
 
-      const desiredCenters = groupNodes.map((node) => (meta.get(node.id)?.baseX ?? 0) * FIXED_X_STEP);
-      const actualCenters = groupNodes.map((node) => placedX.get(node.id) ?? 0);
-      const desiredMean = desiredCenters.reduce((sum, value) => sum + value, 0) / Math.max(desiredCenters.length, 1);
-      const actualMean = actualCenters.reduce((sum, value) => sum + value, 0) / Math.max(actualCenters.length, 1);
-      const shift = desiredMean - actualMean;
-
-      for (const node of groupNodes) {
-        positions.set(node.id, {
-          x: (placedX.get(node.id) ?? 0) + shift,
-          y: rowTop,
-        });
+  // Bottom-up refinement: nudge parent rows toward resolved children anchors.
+  const rowIndexesDesc = [...rowIndexes].sort((a, b) => b - a);
+  for (const layer of rowIndexesDesc) {
+    const rowNodes = nodes.filter((node) => (meta.get(node.id)?.layer ?? 0) === layer);
+    const byRoot = new Map<string, Node<NodeData>[]>();
+    for (const node of rowNodes) {
+      const rootId = meta.get(node.id)?.rootId ?? node.id;
+      const bucket = byRoot.get(rootId) ?? [];
+      bucket.push(node);
+      byRoot.set(rootId, bucket);
+    }
+    const rowTop = rowTopByLayer.get(layer) ?? FIXED_BASE_TOP;
+    for (const [, groupNodesRaw] of byRoot) {
+      const targetById = new Map<string, number>();
+      const anchorById = new Map<string, boolean>();
+      for (const node of groupNodesRaw) {
+        const children = childrenByParent.get(node.id) ?? [];
+        const childrenWithPos = children
+          .map((child) => positions.get(child.id)?.x)
+          .filter((value): value is number => typeof value === "number");
+        if (childrenWithPos.length > 0) {
+          const avgChildX = childrenWithPos.reduce((sum, value) => sum + value, 0) / childrenWithPos.length;
+          targetById.set(node.id, avgChildX);
+          anchorById.set(node.id, childrenWithPos.length === 1);
+        } else {
+          targetById.set(node.id, positions.get(node.id)?.x ?? (meta.get(node.id)?.baseX ?? 0) * FIXED_X_STEP);
+          anchorById.set(node.id, false);
+        }
       }
+      packRowGroup(groupNodesRaw, targetById, anchorById, rowTop);
     }
   }
 
@@ -286,8 +397,7 @@ export function buildFixedPositions(
     if (!bounds) continue;
     const currentShift = componentShift.get(rootId) ?? 0;
     if (prevMaxX !== null) {
-      const gap = FIXED_MIN_COL_GAP * 3;
-      const minAllowedLeft = prevMaxX + gap;
+      const minAllowedLeft = prevMaxX + treeGap;
       const currentLeft = bounds.minX + currentShift;
       if (currentLeft < minAllowedLeft) {
         componentShift.set(rootId, currentShift + (minAllowedLeft - currentLeft));

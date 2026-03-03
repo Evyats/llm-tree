@@ -6,6 +6,7 @@ export const FIXED_X_STEP = 260;
 export const FIXED_ROOT_SPREAD = 4;
 export const FIXED_MIN_COL_GAP = 36;
 export const FIXED_ROW_GAP = 26;
+export const FIXED_TREE_GAP = 108;
 
 export const FIT_VIEW_OPTIONS: FitViewOptions = {
   padding: 0.34,

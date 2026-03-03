@@ -74,6 +74,14 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
             </>
           )}
         </div>
+        {!data.variantLocked && (
+          <div className="h-1.5 w-20 overflow-hidden rounded-full bg-stone-200" aria-hidden>
+            <div
+              className="h-full rounded-full bg-accent transition-all duration-200"
+              style={{ width: `${((data.variantIndex + 1) / 3) * 100}%` }}
+            />
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <button
             className="rounded bg-accent px-2 py-1 text-xs text-white hover:opacity-90"

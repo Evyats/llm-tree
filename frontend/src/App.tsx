@@ -6,6 +6,8 @@ import ReactFlow, {
   MiniMap,
   applyEdgeChanges,
   applyNodeChanges,
+  getNodesBounds,
+  getViewportForBounds,
   type Edge,
   type EdgeChange,
   type Node,
@@ -36,7 +38,13 @@ import AssistantNode from "./components/AssistantNode";
 import UserNode from "./components/UserNode";
 import { buildTranscriptUntilNode } from "./features/chat/transcript";
 import { buildNodeMap, getAssistantNodesWithUserBranch, getContinueFromVariantIndex } from "./features/graph/nodeSelectors";
-import { FIT_VIEW_OPTIONS, GRAPH_STORAGE_KEY } from "./features/layout/constants";
+import {
+  FIT_VIEW_OPTIONS,
+  FIXED_MIN_COL_GAP,
+  FIXED_ROW_GAP,
+  FIXED_TREE_GAP,
+  GRAPH_STORAGE_KEY,
+} from "./features/layout/constants";
 import { buildFixedPositions } from "./features/layout/layoutEngine";
 import { useGraphStore, type NodeData } from "./store/useGraphStore";
 
@@ -46,6 +54,11 @@ interface ElaborateAction {
   x: number;
   y: number;
 }
+
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 2.5;
+const CONTEXT_PANEL_WIDTH = 420;
+const FOOTER_OVERLAY_HEIGHT = 52;
 
 export default function App() {
   const {
@@ -78,7 +91,13 @@ export default function App() {
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [fixedMode, setFixedMode] = useState(false);
   const [nodeSizes, setNodeSizes] = useState<Map<string, { width: number; height: number }>>(new Map());
+  const [rowGap, setRowGap] = useState(FIXED_ROW_GAP);
+  const [treeGap, setTreeGap] = useState(FIXED_TREE_GAP);
+  const [siblingGap, setSiblingGap] = useState(FIXED_MIN_COL_GAP);
+  const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
+  const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
   const composerInputRef = useRef<HTMLInputElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
 
   const manualPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodesRef = useRef(nodes);
@@ -129,10 +148,31 @@ export default function App() {
   const fitCanvasToGraph = useCallback(() => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        reactFlowInstance?.fitView(FIT_VIEW_OPTIONS);
+        if (!reactFlowInstance || !mainRef.current) return;
+        const rfNodes = reactFlowInstance.getNodes().filter((node) => !node.hidden);
+        if (rfNodes.length === 0) return;
+
+        const bounds = getNodesBounds(rfNodes);
+        const visibleWidth = Math.max(120, mainRef.current.clientWidth - (panelOpen ? CONTEXT_PANEL_WIDTH : 0));
+        const visibleHeight = Math.max(120, mainRef.current.clientHeight - FOOTER_OVERLAY_HEIGHT);
+        const viewport = getViewportForBounds(bounds, visibleWidth, visibleHeight, MIN_ZOOM, MAX_ZOOM, 0.18);
+        void reactFlowInstance.setViewport(viewport, { duration: FIT_VIEW_OPTIONS.duration ?? 280 });
       });
     });
-  }, [reactFlowInstance]);
+  }, [panelOpen, reactFlowInstance]);
+
+  const updateLayoutPanelPosition = useCallback(() => {
+    const mainEl = mainRef.current;
+    if (!mainEl) return;
+    const controlsEl = mainEl.querySelector(".react-flow__controls") as HTMLElement | null;
+    if (!controlsEl) return;
+    const mainRect = mainEl.getBoundingClientRect();
+    const controlsRect = controlsEl.getBoundingClientRect();
+    setLayoutPanelPosition({
+      left: controlsRect.right - mainRect.left + 8,
+      top: controlsRect.top - mainRect.top,
+    });
+  }, []);
 
   const refreshMeasuredNodeSizes = useCallback(() => {
     if (!reactFlowInstance) return;
@@ -401,7 +441,10 @@ export default function App() {
     []
   );
 
-  const structure = useMemo(() => buildFixedPositions(nodes, nodeSizes), [nodes, nodeSizes]);
+  const structure = useMemo(
+    () => buildFixedPositions(nodes, nodeSizes, { rowGap, treeGap, siblingGap }),
+    [nodes, nodeSizes, rowGap, treeGap, siblingGap]
+  );
 
   const toggleLayoutMode = useCallback(() => {
     if (fixedMode) {
@@ -417,9 +460,7 @@ export default function App() {
   }, [fixedMode, setNodes]);
 
   useEffect(() => {
-    if (fixedMode) {
-      fitCanvasToGraph();
-    }
+    fitCanvasToGraph();
   }, [fitCanvasToGraph, fixedMode]);
 
   useEffect(() => {
@@ -435,6 +476,21 @@ export default function App() {
       window.clearTimeout(timeout);
     };
   }, [fixedMode, reactFlowInstance, refreshMeasuredNodeSizes, nodes]);
+
+  useEffect(() => {
+    if (!fixedMode || !layoutPanelOpen) {
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      updateLayoutPanelPosition();
+    });
+    const onResize = () => updateLayoutPanelPosition();
+    window.addEventListener("resize", onResize);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [fixedMode, layoutPanelOpen, updateLayoutPanelPosition]);
 
   const assistantWithBranch = useMemo(() => getAssistantNodesWithUserBranch(nodesById, edges), [edges, nodesById]);
 
@@ -492,7 +548,76 @@ export default function App() {
         onNewChat={() => void startNewChat()}
       />
 
-      <main className="h-full pl-64 pt-12">
+      <main ref={mainRef} className="h-full pl-64 pt-12">
+        {fixedMode && layoutPanelOpen && (
+          <div
+            className="absolute z-[1000] w-64 rounded-lg border border-stone-300 bg-paper/95 p-2 backdrop-blur pointer-events-auto"
+            style={{ left: layoutPanelPosition.left, top: layoutPanelPosition.top }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-600">Layout Controls</div>
+              <button
+                className="rounded bg-stone-200 p-1 text-stone-700 hover:bg-stone-300"
+                onClick={() => setLayoutPanelOpen(false)}
+                type="button"
+                aria-label="Close layout controls"
+                title="Close"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M5 5L15 15M15 5L5 15" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+            <div className="mb-2 text-[10px] text-stone-500">Double-click any slider to reset to default.</div>
+            <label className="mb-2 block text-[11px] text-stone-700">
+              Row gap: <span className="font-semibold">{rowGap}</span>
+              <input
+                className="mt-1 w-full"
+                type="range"
+                min={0}
+                max={120}
+                step={1}
+                value={rowGap}
+                onChange={(event) => setRowGap(Number(event.target.value))}
+                onDoubleClick={() => setRowGap(FIXED_ROW_GAP)}
+                title="Double-click to reset"
+              />
+            </label>
+            <label className="mb-2 block text-[11px] text-stone-700">
+              Sibling gap: <span className="font-semibold">{siblingGap}</span>
+              <input
+                className="mt-1 w-full"
+                type="range"
+                min={0}
+                max={160}
+                step={1}
+                value={siblingGap}
+                onChange={(event) => setSiblingGap(Number(event.target.value))}
+                onDoubleClick={() => setSiblingGap(FIXED_MIN_COL_GAP)}
+                title="Double-click to reset"
+              />
+            </label>
+            <label className="block text-[11px] text-stone-700">
+              Tree gap: <span className="font-semibold">{treeGap}</span>
+              <input
+                className="mt-1 w-full"
+                type="range"
+                min={20}
+                max={420}
+                step={2}
+                value={treeGap}
+                onChange={(event) => setTreeGap(Number(event.target.value))}
+                onDoubleClick={() => setTreeGap(FIXED_TREE_GAP)}
+                title="Double-click to reset"
+              />
+            </label>
+          </div>
+        )}
+
         <ReactFlow
           nodes={uiNodes}
           edges={uiEdges}
@@ -509,8 +634,8 @@ export default function App() {
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={FIT_VIEW_OPTIONS}
-          minZoom={0.05}
-          maxZoom={2.5}
+          minZoom={MIN_ZOOM}
+          maxZoom={MAX_ZOOM}
           nodesDraggable={!fixedMode}
           panOnDrag
           zoomOnScroll
@@ -518,8 +643,33 @@ export default function App() {
         >
           <Background color="#d6d0c5" gap={18} />
           <MiniMap position="top-right" />
-          <Controls position="top-left" fitViewOptions={FIT_VIEW_OPTIONS}>
-            <ControlButton onClick={toggleLayoutMode} title={fixedMode ? "Switch to Free Layout" : "Switch to Fixed Layout"}>
+          <Controls position="top-left" fitViewOptions={FIT_VIEW_OPTIONS} showInteractive={false} showFitView={false}>
+            <ControlButton onClick={fitCanvasToGraph} title="Fit view">
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </ControlButton>
+            <ControlButton
+              onClick={() => setLayoutPanelOpen((value) => !value)}
+              title={fixedMode ? "Toggle layout sliders" : "Layout sliders are available in fixed mode"}
+              disabled={!fixedMode}
+              className={`${!fixedMode ? "opacity-40 cursor-not-allowed" : ""} ${
+                fixedMode && layoutPanelOpen ? "!bg-accent/15 !text-accent" : ""
+              }`}
+            >
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M4 5h12M4 10h12M4 15h12" strokeLinecap="round" />
+                <circle cx="8" cy="5" r="1.7" />
+                <circle cx="12.5" cy="10" r="1.7" />
+                <circle cx="6.5" cy="15" r="1.7" />
+              </svg>
+            </ControlButton>
+            <ControlButton
+              onClick={toggleLayoutMode}
+              title={fixedMode ? "Switch to Free Layout" : "Switch to Fixed Layout"}
+              className={fixedMode ? "!bg-accent/15 !text-accent" : ""}
+            >
               {fixedMode ? (
                 <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
                   <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />

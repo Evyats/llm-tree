@@ -28,8 +28,16 @@ export default function ContextPanel({
     <aside className="absolute right-0 top-12 z-20 h-[calc(100%-6.5rem)] w-[420px] border-l border-stone-300 bg-paper/95 p-3 backdrop-blur">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold">Context Chat</h2>
-        <button className="rounded bg-stone-200 px-2 py-1 text-xs" onClick={onClose} type="button">
-          Close
+        <button
+          className="rounded bg-stone-200 p-1.5 text-stone-700 hover:bg-stone-300"
+          onClick={onClose}
+          type="button"
+          aria-label="Close context chat"
+          title="Close"
+        >
+          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M5 5L15 15M15 5L5 15" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
       <div className="mb-3 h-[calc(100%-5rem)] overflow-auto rounded border border-stone-300 bg-white p-2">
@@ -65,6 +73,12 @@ export default function ContextPanel({
           className="flex-1 rounded border border-stone-300 px-2 py-1 text-sm"
           value={panelText}
           onChange={(event) => onPanelTextChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSend();
+            }
+          }}
           placeholder="Continue from selected node..."
         />
         <button className="rounded bg-accent px-3 py-1 text-sm text-white" onClick={onSend} type="button">

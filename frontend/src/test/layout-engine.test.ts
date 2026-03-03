@@ -115,4 +115,94 @@ describe("layoutEngine", () => {
     expect(Math.abs(xU1 - xA1)).toBeLessThan(0.001);
     expect(Math.abs(xU2 - xA2)).toBeLessThan(0.001);
   });
+
+  it("keeps single-child continuation centered under shifted parent", () => {
+    const nodes = [
+      makeNode("u0", "user", null, "root"),
+      makeNode("aL", "assistant", "u0", "left branch with very long text to force width and packing"),
+      makeNode("uR", "user", "u0", "right branch user"),
+      makeNode("aR", "assistant", "uR", "right branch assistant"),
+      makeNode("uR2", "user", "aR", "right continuation"),
+    ];
+    const sizes = new Map([
+      ["aL", { width: 700, height: 240 }],
+      ["aR", { width: 320, height: 140 }],
+      ["uR2", { width: 240, height: 96 }],
+    ]);
+
+    const result = buildFixedPositions(nodes, sizes);
+    const xParent = result.positions.get("aR")?.x ?? 0;
+    const xChild = result.positions.get("uR2")?.x ?? 0;
+    expect(Math.abs(xParent - xChild)).toBeLessThan(0.001);
+  });
+
+  it("nudges parent row toward children anchors after refinement", () => {
+    const nodes = [
+      makeNode("u0", "user", null, "root"),
+      makeNode("aL", "assistant", "u0", "left assistant"),
+      makeNode("aM", "assistant", "u0", "middle assistant"),
+      makeNode("uL", "user", "aL", "left child"),
+      makeNode("uM", "user", "aM", "middle child"),
+      makeNode("uM2", "user", "uM", "middle child deeper"),
+    ];
+    const sizes = new Map([
+      ["aL", { width: 520, height: 200 }],
+      ["aM", { width: 300, height: 130 }],
+      ["uL", { width: 220, height: 90 }],
+      ["uM", { width: 260, height: 96 }],
+      ["uM2", { width: 260, height: 96 }],
+    ]);
+    const result = buildFixedPositions(nodes, sizes, { siblingGap: 10 });
+    const xAL = result.positions.get("aL")?.x ?? 0;
+    const xUL = result.positions.get("uL")?.x ?? 0;
+    expect(Math.abs(xAL - xUL)).toBeLessThan(0.001);
+  });
+
+  it("avoids interleaving children of neighboring parents (prevents crossing)", () => {
+    const nodes = [
+      makeNode("u0", "user", null, "root"),
+      makeNode("aL", "assistant", "u0", "left parent"),
+      makeNode("aR", "assistant", "u0", "right parent"),
+      makeNode("uL1", "user", "aL", "left child 1"),
+      makeNode("uL2", "user", "aL", "left child 2"),
+      makeNode("uR1", "user", "aR", "right child"),
+    ];
+    const sizes = new Map([
+      ["aL", { width: 540, height: 200 }],
+      ["aR", { width: 300, height: 130 }],
+      ["uL1", { width: 220, height: 90 }],
+      ["uL2", { width: 220, height: 90 }],
+      ["uR1", { width: 220, height: 90 }],
+    ]);
+    const result = buildFixedPositions(nodes, sizes, { siblingGap: 8 });
+    const xL1 = result.positions.get("uL1")?.x ?? 0;
+    const xL2 = result.positions.get("uL2")?.x ?? 0;
+    const xR1 = result.positions.get("uR1")?.x ?? 0;
+    expect(Math.max(xL1, xL2)).toBeLessThan(xR1);
+  });
+
+  it("keeps single-child node centered even in crowded sibling row", () => {
+    const nodes = [
+      makeNode("u0", "user", null, "root"),
+      makeNode("a1", "assistant", "u0", "left wide assistant"),
+      makeNode("a2", "assistant", "u0", "middle assistant"),
+      makeNode("a3", "assistant", "u0", "right assistant"),
+      makeNode("u21", "user", "a2", "single child"),
+      makeNode("u11", "user", "a1", "left child 1"),
+      makeNode("u12", "user", "a1", "left child 2"),
+    ];
+    const sizes = new Map([
+      ["a1", { width: 620, height: 220 }],
+      ["a2", { width: 300, height: 130 }],
+      ["a3", { width: 300, height: 130 }],
+      ["u11", { width: 220, height: 90 }],
+      ["u12", { width: 220, height: 90 }],
+      ["u21", { width: 220, height: 90 }],
+    ]);
+    const result = buildFixedPositions(nodes, sizes, { siblingGap: 20 });
+    const xA2 = result.positions.get("a2")?.x ?? 0;
+    const xU21 = result.positions.get("u21")?.x ?? 0;
+    expect(Math.abs(xA2 - xU21)).toBeLessThan(0.001);
+  });
+
 });
