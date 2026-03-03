@@ -7,12 +7,16 @@ interface AssistantNodeData extends NodeData {
   onCycleVariant?: (nodeId: string, direction: -1 | 1) => void;
   onSelectElaboration?: (nodeId: string, text: string, x: number, y: number) => void;
   onOpenPanel?: (nodeId: string) => void;
+  onHoverWheelStart?: (nodeId: string) => void;
+  onHoverWheelEnd?: (nodeId: string) => void;
+  onHoverWheelScroll?: (nodeId: string, deltaY: number) => boolean;
 }
 
 function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
   const measureRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLParagraphElement>(null);
   const [size, setSize] = useState({ w: 360, h: 140 });
+  const wheelEligible = !data.variantLocked && !!data.variants;
 
   useLayoutEffect(() => {
     if (!measureRef.current) {
@@ -38,6 +42,22 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
 
   return (
     <div
+      onMouseEnter={() => {
+        if (!wheelEligible) return;
+        data.onHoverWheelStart?.(id);
+      }}
+      onMouseLeave={() => {
+        if (!wheelEligible) return;
+        data.onHoverWheelEnd?.(id);
+      }}
+      onWheel={(event) => {
+        if (!wheelEligible) return;
+        const handled = data.onHoverWheelScroll?.(id, event.deltaY) ?? false;
+        if (handled) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
       onDoubleClick={(event) => event.stopPropagation()}
       className={`rounded-2xl border bg-white px-4 py-3 shadow-float transition-all duration-300 ${
         selected ? "border-accent" : "border-stone-300"

@@ -59,6 +59,16 @@ const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 2.5;
 const CONTEXT_PANEL_WIDTH = 420;
 const FOOTER_OVERLAY_HEIGHT = 52;
+const FIT_VIEW_BUTTON_PADDING = 0.4;
+const ZOOM_BUTTON_FACTOR = 1.4;
+const DEFAULT_ASSISTANT_WHEEL_HOLD_MS = 100;
+const ASSISTANT_WHEEL_STEP_COOLDOWN_MS = 140;
+const DEFAULT_EDGE_STYLE = "default";
+const EDGE_STYLE_OPTIONS = [
+  { value: "default", label: "Bezier" },
+  { value: "straight", label: "Straight" },
+  { value: "step", label: "Step" },
+] as const;
 
 export default function App() {
   const {
@@ -89,18 +99,26 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [previousChats, setPreviousChats] = useState<ChatSummary[]>([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
-  const [fixedMode, setFixedMode] = useState(false);
+  const [fixedMode, setFixedMode] = useState(true);
   const [nodeSizes, setNodeSizes] = useState<Map<string, { width: number; height: number }>>(new Map());
   const [rowGap, setRowGap] = useState(FIXED_ROW_GAP);
   const [treeGap, setTreeGap] = useState(FIXED_TREE_GAP);
   const [siblingGap, setSiblingGap] = useState(FIXED_MIN_COL_GAP);
+  const [assistantWheelHoldMs, setAssistantWheelHoldMs] = useState(DEFAULT_ASSISTANT_WHEEL_HOLD_MS);
+  const [edgeStyleIndex, setEdgeStyleIndex] = useState(0);
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
+  const [wheelHoverNodeId, setWheelHoverNodeId] = useState<string | null>(null);
+  const [wheelHoverProgress, setWheelHoverProgress] = useState(0);
+  const [wheelHoverActive, setWheelHoverActive] = useState(false);
   const composerInputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
 
   const manualPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodesRef = useRef(nodes);
+  const wheelHoverStartRef = useRef<number>(0);
+  const wheelHoverRafRef = useRef<number | null>(null);
+  const wheelLastStepAtRef = useRef(0);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -155,7 +173,14 @@ export default function App() {
         const bounds = getNodesBounds(rfNodes);
         const visibleWidth = Math.max(120, mainRef.current.clientWidth - (panelOpen ? CONTEXT_PANEL_WIDTH : 0));
         const visibleHeight = Math.max(120, mainRef.current.clientHeight - FOOTER_OVERLAY_HEIGHT);
-        const viewport = getViewportForBounds(bounds, visibleWidth, visibleHeight, MIN_ZOOM, MAX_ZOOM, 0.18);
+        const viewport = getViewportForBounds(
+          bounds,
+          visibleWidth,
+          visibleHeight,
+          MIN_ZOOM,
+          MAX_ZOOM,
+          FIT_VIEW_BUTTON_PADDING
+        );
         void reactFlowInstance.setViewport(viewport, { duration: FIT_VIEW_OPTIONS.duration ?? 280 });
       });
     });
@@ -261,6 +286,77 @@ export default function App() {
     },
     [nodesById, updateVariantLocal]
   );
+
+  const clearAssistantWheelHover = useCallback(() => {
+    if (wheelHoverRafRef.current !== null) {
+      cancelAnimationFrame(wheelHoverRafRef.current);
+      wheelHoverRafRef.current = null;
+    }
+    setWheelHoverNodeId(null);
+    setWheelHoverProgress(0);
+    setWheelHoverActive(false);
+    wheelHoverStartRef.current = 0;
+    wheelLastStepAtRef.current = 0;
+  }, []);
+
+  const handleAssistantHoverStart = useCallback(
+    (nodeId: string) => {
+      if (wheelHoverRafRef.current !== null) {
+        cancelAnimationFrame(wheelHoverRafRef.current);
+        wheelHoverRafRef.current = null;
+      }
+      setWheelHoverNodeId(nodeId);
+      setWheelHoverProgress(0);
+      setWheelHoverActive(false);
+      wheelHoverStartRef.current = performance.now();
+      wheelLastStepAtRef.current = 0;
+      // Render immediate 0% state before first animation frame.
+      setWheelHoverProgress(0.001);
+
+      const tick = () => {
+        const elapsed = performance.now() - wheelHoverStartRef.current;
+        const progress = Math.max(0, Math.min(1, elapsed / assistantWheelHoldMs));
+        setWheelHoverProgress(progress);
+        if (progress >= 1) {
+          setWheelHoverActive(true);
+          wheelHoverRafRef.current = null;
+          return;
+        }
+        wheelHoverRafRef.current = requestAnimationFrame(tick);
+      };
+      wheelHoverRafRef.current = requestAnimationFrame(tick);
+    },
+    [assistantWheelHoldMs]
+  );
+
+  const handleAssistantHoverEnd = useCallback(
+    (nodeId: string) => {
+      if (wheelHoverNodeId !== nodeId) {
+        return;
+      }
+      clearAssistantWheelHover();
+    },
+    [clearAssistantWheelHover, wheelHoverNodeId]
+  );
+
+  const handleAssistantWheel = useCallback(
+    (nodeId: string, deltaY: number) => {
+      if (!wheelHoverActive || wheelHoverNodeId !== nodeId) {
+        return false;
+      }
+      const now = performance.now();
+      if (now - wheelLastStepAtRef.current < ASSISTANT_WHEEL_STEP_COOLDOWN_MS) {
+        return true;
+      }
+      wheelLastStepAtRef.current = now;
+      const direction: -1 | 1 = deltaY > 0 ? 1 : -1;
+      void cycleVariant(nodeId, direction);
+      return true;
+    },
+    [cycleVariant, wheelHoverActive, wheelHoverNodeId]
+  );
+
+  useEffect(() => () => clearAssistantWheelHover(), [clearAssistantWheelHover]);
 
   const sendContinue = useCallback(
     async (mode: "normal" | "elaboration", highlightedText?: string) => {
@@ -494,6 +590,18 @@ export default function App() {
 
   const assistantWithBranch = useMemo(() => getAssistantNodesWithUserBranch(nodesById, edges), [edges, nodesById]);
 
+  useEffect(() => {
+    if (!wheelHoverNodeId) return;
+    const hoveredNode = nodesById.get(wheelHoverNodeId);
+    const nodeIsEligible =
+      hoveredNode?.data.role === "assistant" &&
+      !!hoveredNode.data.variants &&
+      !assistantWithBranch.has(wheelHoverNodeId);
+    if (!nodeIsEligible) {
+      clearAssistantWheelHover();
+    }
+  }, [assistantWithBranch, clearAssistantWheelHover, nodesById, wheelHoverNodeId]);
+
   const uiNodes: Node<NodeData>[] = useMemo(
     () =>
       nodes.map((node) => ({
@@ -513,16 +621,45 @@ export default function App() {
             setPanelOpen(true);
             setTranscript(buildTranscriptUntilNode(nodes, nodeId));
           },
+          onHoverWheelStart: (nodeId: string) => {
+            handleAssistantHoverStart(nodeId);
+          },
+          onHoverWheelEnd: (nodeId: string) => {
+            handleAssistantHoverEnd(nodeId);
+          },
+          onHoverWheelScroll: (nodeId: string, deltaY: number) => handleAssistantWheel(nodeId, deltaY),
         } as NodeData & {
           onCycleVariant: (nodeId: string, direction: -1 | 1) => void;
           onSelectElaboration: (nodeId: string, text: string, x: number, y: number) => void;
           onOpenPanel: (nodeId: string) => void;
+          onHoverWheelStart: (nodeId: string) => void;
+          onHoverWheelEnd: (nodeId: string) => void;
+          onHoverWheelScroll: (nodeId: string, deltaY: number) => boolean;
         },
       })),
-    [assistantWithBranch, cycleVariant, fixedMode, nodes, setPanelOpen, setSelectedNode, setTranscript, structure]
+    [
+      assistantWithBranch,
+      cycleVariant,
+      fixedMode,
+      handleAssistantHoverEnd,
+      handleAssistantHoverStart,
+      handleAssistantWheel,
+      nodes,
+      setPanelOpen,
+      setSelectedNode,
+      setTranscript,
+      structure,
+    ]
   );
 
-  const uiEdges: Edge[] = edges;
+  const uiEdges: Edge[] = useMemo(
+    () =>
+      edges.map((edge) => ({
+        ...edge,
+        type: fixedMode ? EDGE_STYLE_OPTIONS[edgeStyleIndex]?.value ?? DEFAULT_EDGE_STYLE : DEFAULT_EDGE_STYLE,
+      })),
+    [edgeStyleIndex, edges, fixedMode]
+  );
 
   return (
     <div className={`relative h-full w-full overflow-hidden ${fixedMode ? "fixed-layout-animated" : ""}`}>
@@ -547,6 +684,24 @@ export default function App() {
         }}
         onNewChat={() => void startNewChat()}
       />
+
+      {wheelHoverNodeId && (
+        <div className="pointer-events-none absolute left-1/2 top-14 z-[1100] w-72 -translate-x-1/2 rounded-lg border border-stone-300 bg-paper/95 px-3 py-2 shadow-float backdrop-blur">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-700">
+            {wheelHoverActive
+              ? "Wheel Mode Active"
+              : `Hold To Enable Wheel Mode (${(assistantWheelHoldMs / 1000).toFixed(1)}s)`}
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-200">
+            <div
+              className={`h-full rounded-full ${
+                wheelHoverActive ? "bg-accent" : "bg-stone-500"
+              }`}
+              style={{ width: `${wheelHoverProgress * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <main ref={mainRef} className="h-full pl-64 pt-12">
         {fixedMode && layoutPanelOpen && (
@@ -601,6 +756,20 @@ export default function App() {
                 title="Double-click to reset"
               />
             </label>
+            <label className="mb-2 block text-[11px] text-stone-700">
+              Wheel hold (s): <span className="font-semibold">{(assistantWheelHoldMs / 1000).toFixed(1)}</span>
+              <input
+                className="mt-1 w-full"
+                type="range"
+                min={100}
+                max={5000}
+                step={100}
+                value={assistantWheelHoldMs}
+                onChange={(event) => setAssistantWheelHoldMs(Number(event.target.value))}
+                onDoubleClick={() => setAssistantWheelHoldMs(DEFAULT_ASSISTANT_WHEEL_HOLD_MS)}
+                title="Double-click to reset"
+              />
+            </label>
             <label className="block text-[11px] text-stone-700">
               Tree gap: <span className="font-semibold">{treeGap}</span>
               <input
@@ -615,6 +784,29 @@ export default function App() {
                 title="Double-click to reset"
               />
             </label>
+            <div className="mt-2 text-[11px] text-stone-700">
+              <div className="mb-1">
+                Edge style: <span className="font-semibold">{EDGE_STYLE_OPTIONS[edgeStyleIndex]?.label}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {EDGE_STYLE_OPTIONS.map((option, index) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`rounded px-2 py-1 ${
+                      edgeStyleIndex === index
+                        ? "bg-accent/20 text-accent border border-accent/40"
+                        : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                    }`}
+                    onClick={() => setEdgeStyleIndex(index)}
+                    aria-label={`Set edge style to ${option.label}`}
+                    title={option.label}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -638,12 +830,44 @@ export default function App() {
           maxZoom={MAX_ZOOM}
           nodesDraggable={!fixedMode}
           panOnDrag
-          zoomOnScroll
+          zoomOnScroll={!wheelHoverActive}
           zoomOnDoubleClick={!fixedMode}
         >
           <Background color="#d6d0c5" gap={18} />
           <MiniMap position="top-right" />
-          <Controls position="top-left" fitViewOptions={FIT_VIEW_OPTIONS} showInteractive={false} showFitView={false}>
+          <Controls
+            position="top-left"
+            fitViewOptions={FIT_VIEW_OPTIONS}
+            showInteractive={false}
+            showFitView={false}
+            showZoom={false}
+          >
+            <ControlButton
+              onClick={() => {
+                if (!reactFlowInstance) return;
+                const viewport = reactFlowInstance.getViewport();
+                const nextZoom = Math.min(MAX_ZOOM, viewport.zoom * ZOOM_BUTTON_FACTOR);
+                void reactFlowInstance.setViewport({ ...viewport, zoom: nextZoom }, { duration: 220 });
+              }}
+              title="Zoom in"
+            >
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M10 5v10M5 10h10" strokeLinecap="round" />
+              </svg>
+            </ControlButton>
+            <ControlButton
+              onClick={() => {
+                if (!reactFlowInstance) return;
+                const viewport = reactFlowInstance.getViewport();
+                const nextZoom = Math.max(MIN_ZOOM, viewport.zoom / ZOOM_BUTTON_FACTOR);
+                void reactFlowInstance.setViewport({ ...viewport, zoom: nextZoom }, { duration: 220 });
+              }}
+              title="Zoom out"
+            >
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M5 10h10" strokeLinecap="round" />
+              </svg>
+            </ControlButton>
             <ControlButton onClick={fitCanvasToGraph} title="Fit view">
               <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
