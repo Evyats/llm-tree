@@ -201,25 +201,37 @@ export function buildFixedPositions(
   );
 
   const rowIndexes = Array.from(new Set(Array.from(meta.values()).map((item) => item.layer))).sort((a, b) => a - b);
-  const rowHeightByLayer = new Map<number, number>();
-  for (const layer of rowIndexes) {
-    const rowNodes = nodes.filter((node) => (meta.get(node.id)?.layer ?? 0) === layer);
-    rowHeightByLayer.set(layer, Math.max(...rowNodes.map((node) => sizeById.get(node.id)?.height ?? 120), 120));
-  }
+  // Vertical spacing is computed per disconnected tree so another tree's tall
+  // node doesn't stretch this tree's lane distances.
+  const rowHeightByRootLayer = new Map<string, Map<number, number>>();
+  const rowTopByRootLayer = new Map<string, Map<number, number>>();
+  const roots = Array.from(new Set(nodes.map((node) => meta.get(node.id)?.rootId ?? node.id)));
 
-  // Row Y is top-aligned and built with strict sequential spacing:
-  // every adjacent row pair gets the same configured edge gap.
-  const rowTopByLayer = new Map<number, number>();
-  for (let i = 0; i < rowIndexes.length; i += 1) {
-    const layer = rowIndexes[i];
-    if (i === 0) {
-      rowTopByLayer.set(layer, FIXED_BASE_TOP);
-      continue;
+  for (const rootId of roots) {
+    const rootNodes = nodes.filter((node) => (meta.get(node.id)?.rootId ?? node.id) === rootId);
+    const rootLayers = Array.from(new Set(rootNodes.map((node) => meta.get(node.id)?.layer ?? 0))).sort((a, b) => a - b);
+    const heightByLayer = new Map<number, number>();
+    const topByLayer = new Map<number, number>();
+
+    for (const layer of rootLayers) {
+      const layerNodes = rootNodes.filter((node) => (meta.get(node.id)?.layer ?? 0) === layer);
+      heightByLayer.set(layer, Math.max(...layerNodes.map((node) => sizeById.get(node.id)?.height ?? 120)));
     }
-    const prevLayer = rowIndexes[i - 1];
-    const prevTop = rowTopByLayer.get(prevLayer) ?? FIXED_BASE_TOP;
-    const prevHeight = rowHeightByLayer.get(prevLayer) ?? 120;
-    rowTopByLayer.set(layer, prevTop + prevHeight + rowGap);
+
+    for (let i = 0; i < rootLayers.length; i += 1) {
+      const layer = rootLayers[i];
+      if (i === 0) {
+        topByLayer.set(layer, FIXED_BASE_TOP);
+        continue;
+      }
+      const prevLayer = rootLayers[i - 1];
+      const prevTop = topByLayer.get(prevLayer) ?? FIXED_BASE_TOP;
+      const prevHeight = heightByLayer.get(prevLayer) ?? 0;
+      topByLayer.set(layer, prevTop + prevHeight + rowGap);
+    }
+
+    rowHeightByRootLayer.set(rootId, heightByLayer);
+    rowTopByRootLayer.set(rootId, topByLayer);
   }
 
   const packRowGroup = (
@@ -310,8 +322,8 @@ export function buildFixedPositions(
       byRoot.set(rootId, bucket);
     }
 
-    const rowTop = rowTopByLayer.get(layer) ?? FIXED_BASE_TOP;
-    for (const [, groupNodesRaw] of byRoot) {
+    for (const [rootId, groupNodesRaw] of byRoot) {
+      const rowTop = rowTopByRootLayer.get(rootId)?.get(layer) ?? FIXED_BASE_TOP;
       const targetById = new Map<string, number>();
       const anchorById = new Map<string, boolean>();
       for (const node of groupNodesRaw) {
@@ -348,8 +360,8 @@ export function buildFixedPositions(
       bucket.push(node);
       byRoot.set(rootId, bucket);
     }
-    const rowTop = rowTopByLayer.get(layer) ?? FIXED_BASE_TOP;
-    for (const [, groupNodesRaw] of byRoot) {
+    for (const [rootId, groupNodesRaw] of byRoot) {
+      const rowTop = rowTopByRootLayer.get(rootId)?.get(layer) ?? FIXED_BASE_TOP;
       const targetById = new Map<string, number>();
       const anchorById = new Map<string, boolean>();
       for (const node of groupNodesRaw) {
@@ -413,6 +425,38 @@ export function buildFixedPositions(
     const pos = positions.get(node.id);
     if (!pos || shift === 0) continue;
     positions.set(node.id, { x: pos.x + shift, y: pos.y });
+  }
+
+  // Vertical lane refinement: keep single-child continuations at an exact
+  // edge-to-edge gap from parent, independent of other branch row heights.
+  const layerCountByRoot = new Map<string, Map<number, number>>();
+  for (const node of nodes) {
+    const rootId = meta.get(node.id)?.rootId ?? node.id;
+    const layer = meta.get(node.id)?.layer ?? 0;
+    const rootLayerMap = layerCountByRoot.get(rootId) ?? new Map<number, number>();
+    rootLayerMap.set(layer, (rootLayerMap.get(layer) ?? 0) + 1);
+    layerCountByRoot.set(rootId, rootLayerMap);
+  }
+
+  const nodesByLayer = [...nodes].sort(
+    (a, b) => (meta.get(a.id)?.layer ?? 0) - (meta.get(b.id)?.layer ?? 0)
+  );
+  for (const node of nodesByLayer) {
+    const parentId = node.data.parentId;
+    if (!parentId) continue;
+    const rootId = meta.get(node.id)?.rootId ?? node.id;
+    const layer = meta.get(node.id)?.layer ?? 0;
+    if ((layerCountByRoot.get(rootId)?.get(layer) ?? 0) !== 1) continue;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    if (siblings.length !== 1) continue;
+    const parentPos = positions.get(parentId);
+    const nodePos = positions.get(node.id);
+    if (!parentPos || !nodePos) continue;
+    const parentHeight = sizeById.get(parentId)?.height ?? 120;
+    positions.set(node.id, {
+      x: nodePos.x,
+      y: parentPos.y + parentHeight + rowGap,
+    });
   }
 
   return { meta, positions, sizeById };

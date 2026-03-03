@@ -136,6 +136,32 @@ describe("layoutEngine", () => {
     expect(Math.abs(xParent - xChild)).toBeLessThan(0.001);
   });
 
+  it("keeps exact row gap for single-child lane even with tall side branch", () => {
+    const nodes = [
+      makeNode("u1", "user", null, "1"),
+      makeNode("aTall", "assistant", "u1", "very long assistant text to force a tall card in sibling branch"),
+      makeNode("aMain", "assistant", "u1", "main lane assistant"),
+      makeNode("u2", "user", "aMain", "2"),
+      makeNode("a2", "assistant", "u2", "second assistant"),
+    ];
+    const sizes = new Map([
+      ["u1", { width: 220, height: 90 }],
+      ["aTall", { width: 760, height: 320 }],
+      ["aMain", { width: 320, height: 140 }],
+      ["u2", { width: 220, height: 90 }],
+      ["a2", { width: 320, height: 140 }],
+    ]);
+    const rowGap = 26;
+    const result = buildFixedPositions(nodes, sizes, { rowGap, siblingGap: 16 });
+    const yU1 = result.positions.get("u1")?.y ?? 0;
+    const yAMain = result.positions.get("aMain")?.y ?? 0;
+    const yU2 = result.positions.get("u2")?.y ?? 0;
+    const hU1 = result.sizeById.get("u1")?.height ?? 90;
+    const hAMain = result.sizeById.get("aMain")?.height ?? 140;
+    expect(Math.round(yAMain - (yU1 + hU1))).toBe(rowGap);
+    expect(Math.round(yU2 - (yAMain + hAMain))).toBe(rowGap);
+  });
+
   it("nudges parent row toward children anchors after refinement", () => {
     const nodes = [
       makeNode("u0", "user", null, "root"),
