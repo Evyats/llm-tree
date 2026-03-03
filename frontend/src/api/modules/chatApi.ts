@@ -1,14 +1,8 @@
-import type { GraphEdgePayload, GraphNodePayload } from "../../types/graph";
+import type { ContinueResponse } from "../../features/chat/types";
 import { request } from "../http";
 import type { ContinueInPanelRequest } from "../types";
 
-export async function continueInPanel(payload: ContinueInPanelRequest): Promise<{
-  created_user_node: GraphNodePayload;
-  created_assistant_node: GraphNodePayload;
-  created_edges: GraphEdgePayload[];
-  response_source: "live" | "fallback";
-  transcript_window: Array<{ role: string; content: string }>;
-}> {
+export async function continueInPanel(payload: ContinueInPanelRequest): Promise<ContinueResponse> {
   return request("/api/chat/continue", {
     method: "POST",
     body: JSON.stringify(payload),

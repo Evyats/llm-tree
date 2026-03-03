@@ -3,7 +3,6 @@ import ReactFlow, {
   Background,
   ControlButton,
   Controls,
-  MarkerType,
   MiniMap,
   applyEdgeChanges,
   applyNodeChanges,
@@ -16,19 +15,11 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import {
-  continueFromNode,
-  continueInPanel,
-  createGraph,
   deleteNodeSubtree,
-  deleteAllGraphs,
-  deleteGraph,
   getGraph,
-  listGraphs,
-  renameGraph,
   setSessionApiKey,
   updateVariant,
 } from "./api/client";
-import type { ChatSummary } from "./api/types";
 import ElaborateButton from "./components/common/ElaborateButton";
 import ContextPanel from "./components/panels/ContextPanel";
 import ComposerBar from "./components/panels/ComposerBar";
@@ -38,17 +29,43 @@ import AssistantNode from "./components/AssistantNode";
 import CollapsedNode from "./components/CollapsedNode";
 import UserNode from "./components/UserNode";
 import { buildTranscriptUntilNode } from "./features/chat/transcript";
-import { buildNodeMap, getAssistantNodesWithUserBranch, getContinueFromVariantIndex } from "./features/graph/nodeSelectors";
+import { buildTranscriptFromPayloadNodes } from "./features/chat/payloadTranscript";
+import { useGraphBootstrap } from "./features/chat/useGraphBootstrap";
+import { useConversationActions } from "./features/chat/useConversationActions";
+import { useGraphSessions } from "./features/chat/useGraphSessions";
+import {
+  buildChildrenBySource,
+  buildCollapsedProxyTargets,
+  buildHiddenNodeIds,
+  isFoldableEdge,
+  buildLayoutNodeSizes,
+  buildLayoutNodes,
+  buildProjectedUiEdges,
+  collectSubtreeNodeIds,
+  pruneCollapsedEdgeSources,
+  pruneCollapsedTargets,
+} from "./features/graph/collapseProjection";
+import { COLLAPSED_NODE_PREFIX, COLLAPSED_NODE_SIZE } from "./features/graph/constants";
+import { buildDeleteProjection } from "./features/graph/deleteProjection";
+import {
+  EDGE_LINE_STYLE_OPTIONS,
+  EDGE_MOTION_OPTIONS,
+  EDGE_TYPE_OPTIONS,
+  type EdgeLineStyleValue,
+  type EdgeMotionValue,
+  type EdgeTypeValue,
+} from "./features/graph/edgeStyles";
+import { buildNodeMap, getAssistantNodesWithUserBranch } from "./features/graph/nodeSelectors";
 import {
   FIT_VIEW_OPTIONS,
   FIXED_MIN_COL_GAP,
   FIXED_ROW_GAP,
   FIXED_TREE_GAP,
-  GRAPH_STORAGE_KEY,
 } from "./features/layout/constants";
 import { buildFixedPositions } from "./features/layout/layoutEngine";
+import { useViewportControls } from "./features/layout/useViewportControls";
+import { useCollapsedBranches } from "./features/graph/useCollapsedBranches";
 import { useGraphStore, type NodeData } from "./store/useGraphStore";
-import type { GraphNodePayload } from "./types/graph";
 
 interface ElaborateAction {
   nodeId: string;
@@ -59,62 +76,12 @@ interface ElaborateAction {
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 2.5;
-const CONTEXT_PANEL_WIDTH = 420;
 const DEFAULT_FIT_VIEW_BUTTON_PADDING = 0.05;
 const ZOOM_BUTTON_FACTOR = 1.75;
 const DEFAULT_ASSISTANT_WHEEL_HOLD_MS = 0;
 const ASSISTANT_WHEEL_STEP_COOLDOWN_MS = 140;
-const EDGE_TYPE_OPTIONS = [
-  { value: "default", label: "Bezier" },
-  { value: "straight", label: "Straight" },
-  { value: "step", label: "Step" },
-] as const;
-const EDGE_MOTION_OPTIONS = [
-  { value: "static", label: "Static" },
-  { value: "animated", label: "Animated" },
-] as const;
-const EDGE_LINE_STYLE_OPTIONS = [
-  { value: "solid", label: "Solid" },
-  { value: "dashed", label: "Dashed" },
-  { value: "dotted", label: "Dotted" },
-] as const;
-const COLLAPSED_NODE_PREFIX = "collapsed__";
 const NODE_ORIGIN_X = 0.5;
 const NODE_ORIGIN_Y = 0;
-
-function getExactCenteredViewport(
-  bounds: { x: number; y: number; width: number; height: number },
-  viewportWidth: number,
-  viewportHeight: number,
-  minZoom: number,
-  maxZoom: number,
-  padding: number
-) {
-  const safeWidth = Math.max(1, bounds.width);
-  const safeHeight = Math.max(1, bounds.height);
-  const scaleX = viewportWidth / (safeWidth * (1 + padding * 2));
-  const scaleY = viewportHeight / (safeHeight * (1 + padding * 2));
-  const zoom = Math.max(minZoom, Math.min(maxZoom, Math.min(scaleX, scaleY)));
-  const centerX = bounds.x + safeWidth / 2;
-  const centerY = bounds.y + safeHeight / 2;
-  return {
-    x: viewportWidth / 2 - centerX * zoom,
-    y: viewportHeight / 2 - centerY * zoom,
-    zoom,
-  };
-}
-
-function buildTranscriptFromPayloadNodes(nodes: GraphNodePayload[], targetNodeId: string) {
-  const index = new Map(nodes.map((node) => [node.id, node]));
-  const chain: GraphNodePayload[] = [];
-  let current = index.get(targetNodeId) ?? null;
-  while (current) {
-    chain.push(current);
-    current = current.parent_id ? index.get(current.parent_id) ?? null : null;
-  }
-  chain.reverse();
-  return chain.map((node) => ({ role: node.role, content: node.text }));
-}
 
 export default function App() {
   const {
@@ -143,7 +110,6 @@ export default function App() {
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [elaborateAction, setElaborateAction] = useState<ElaborateAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [previousChats, setPreviousChats] = useState<ChatSummary[]>([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [fixedMode, setFixedMode] = useState(true);
   const [nodeSizes, setNodeSizes] = useState<Map<string, { width: number; height: number }>>(new Map());
@@ -152,13 +118,12 @@ export default function App() {
   const [treeGap, setTreeGap] = useState(FIXED_TREE_GAP);
   const [siblingGap, setSiblingGap] = useState(FIXED_MIN_COL_GAP);
   const [assistantWheelHoldMs, setAssistantWheelHoldMs] = useState(DEFAULT_ASSISTANT_WHEEL_HOLD_MS);
-  const [userEdgeType, setUserEdgeType] = useState<(typeof EDGE_TYPE_OPTIONS)[number]["value"]>("default");
-  const [assistantEdgeType, setAssistantEdgeType] = useState<(typeof EDGE_TYPE_OPTIONS)[number]["value"]>("default");
-  const [userEdgeMotion, setUserEdgeMotion] = useState<(typeof EDGE_MOTION_OPTIONS)[number]["value"]>("animated");
-  const [assistantEdgeMotion, setAssistantEdgeMotion] = useState<(typeof EDGE_MOTION_OPTIONS)[number]["value"]>("static");
-  const [userEdgeLineStyle, setUserEdgeLineStyle] = useState<(typeof EDGE_LINE_STYLE_OPTIONS)[number]["value"]>("dashed");
-  const [assistantEdgeLineStyle, setAssistantEdgeLineStyle] =
-    useState<(typeof EDGE_LINE_STYLE_OPTIONS)[number]["value"]>("solid");
+  const [userEdgeType, setUserEdgeType] = useState<EdgeTypeValue>("default");
+  const [assistantEdgeType, setAssistantEdgeType] = useState<EdgeTypeValue>("default");
+  const [userEdgeMotion, setUserEdgeMotion] = useState<EdgeMotionValue>("animated");
+  const [assistantEdgeMotion, setAssistantEdgeMotion] = useState<EdgeMotionValue>("static");
+  const [userEdgeLineStyle, setUserEdgeLineStyle] = useState<EdgeLineStyleValue>("dashed");
+  const [assistantEdgeLineStyle, setAssistantEdgeLineStyle] = useState<EdgeLineStyleValue>("solid");
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
@@ -168,8 +133,15 @@ export default function App() {
   const [wheelHoverProgress, setWheelHoverProgress] = useState(0);
   const [wheelHoverActive, setWheelHoverActive] = useState(false);
   const [nodeContextMenu, setNodeContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
-  const [collapsedTargets, setCollapsedTargets] = useState<Set<string>>(new Set());
-  const [collapsedEdgeSources, setCollapsedEdgeSources] = useState<Map<string, string>>(new Map());
+  const {
+    collapsedTargets,
+    collapsedEdgeSources,
+    setCollapsedTargets,
+    setCollapsedEdgeSources,
+    resetCollapsed,
+    collapseByEdge,
+    unfoldSubtree,
+  } = useCollapsedBranches();
   const composerInputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const nodeContextMenuRef = useRef<HTMLDivElement>(null);
@@ -214,9 +186,8 @@ export default function App() {
   useEffect(() => {
     manualPositionsRef.current = new Map();
     setNodeSizes(new Map());
-    setCollapsedTargets(new Set());
-    setCollapsedEdgeSources(new Map());
-  }, [graphId]);
+    resetCollapsed();
+  }, [graphId, resetCollapsed]);
 
   useEffect(() => {
     for (const node of nodes) {
@@ -226,49 +197,15 @@ export default function App() {
     }
   }, [nodes]);
 
-  const fitCanvasToGraph = useCallback(() => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (!reactFlowInstance || !mainRef.current) return;
-        const rfNodes = reactFlowInstance.getNodes().filter((node) => !node.hidden);
-        if (rfNodes.length === 0) return;
-        let minX = Number.POSITIVE_INFINITY;
-        let minY = Number.POSITIVE_INFINITY;
-        let maxX = Number.NEGATIVE_INFINITY;
-        let maxY = Number.NEGATIVE_INFINITY;
-        for (const node of rfNodes) {
-          const measuredNode = node as typeof node & { measured?: { width?: number; height?: number } };
-          const width = node.width ?? measuredNode.measured?.width ?? 0;
-          const height = node.height ?? measuredNode.measured?.height ?? 0;
-          if (width <= 0 || height <= 0) continue;
-          const left = node.position.x - width * NODE_ORIGIN_X;
-          const top = node.position.y - height * NODE_ORIGIN_Y;
-          minX = Math.min(minX, left);
-          minY = Math.min(minY, top);
-          maxX = Math.max(maxX, left + width);
-          maxY = Math.max(maxY, top + height);
-        }
-        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-          return;
-        }
-        const bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-        const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
-        const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
-        const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
-        const visibleWidth = Math.max(120, baseWidth);
-        const visibleHeight = Math.max(120, baseHeight);
-        const viewport = getExactCenteredViewport(
-          bounds,
-          visibleWidth,
-          visibleHeight,
-          MIN_ZOOM,
-          MAX_ZOOM,
-          fitViewPadding
-        );
-        void reactFlowInstance.setViewport(viewport, { duration: FIT_VIEW_OPTIONS.duration ?? 280 });
-      });
-    });
-  }, [fitViewPadding, panelOpen, reactFlowInstance]);
+  const { fitCanvasToGraph, zoomIn, zoomOut } = useViewportControls({
+    reactFlowInstance,
+    mainElement: mainRef.current,
+    fitViewPadding,
+    minZoom: MIN_ZOOM,
+    maxZoom: MAX_ZOOM,
+    nodeOriginX: NODE_ORIGIN_X,
+    nodeOriginY: NODE_ORIGIN_Y,
+  });
 
   const updateLayoutPanelPosition = useCallback(() => {
     const mainEl = mainRef.current;
@@ -295,41 +232,38 @@ export default function App() {
     setNodeSizes(next);
   }, [reactFlowInstance]);
 
-  const refreshGraphList = useCallback(async () => {
-    try {
-      const items = await listGraphs();
-      setPreviousChats(items);
-    } catch {
-      // Non-blocking panel data.
-    }
-  }, []);
+  const {
+    previousChats,
+    refreshGraphList,
+    loadGraph,
+    startNewChat,
+    selectChatFromHistory,
+    handleRenameChat,
+    handleDeleteChat,
+    handleDeleteAllChats,
+  } = useGraphSessions({
+    graphId,
+    setGraph,
+    setPanelOpen,
+    setPanelAnchorNodeId,
+    setComposerText,
+    setPanelText,
+    setElaborateAction,
+    setResponseSource,
+    setTranscript,
+    setError,
+    setLoading,
+    setMobileHistoryOpen,
+    fitCanvasToGraph,
+  });
 
-  useEffect(() => {
-    const initialize = async () => {
-      try {
-        setLoading(true);
-        const persistedGraph = localStorage.getItem(GRAPH_STORAGE_KEY);
-        if (persistedGraph) {
-          const graph = await getGraph(persistedGraph);
-          setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
-          fitCanvasToGraph();
-          await refreshGraphList();
-          return;
-        }
-        const created = await createGraph("Chat Tree");
-        localStorage.setItem(GRAPH_STORAGE_KEY, created.graph_id);
-        const graph = await getGraph(created.graph_id);
-        setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
-        fitCanvasToGraph();
-        await refreshGraphList();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to initialize graph");
-      } finally {
-        setLoading(false);
-      }
-    };
-    void initialize();
-  }, [fitCanvasToGraph, refreshGraphList, setGraph]);
+  useGraphBootstrap({
+    setLoading,
+    setError,
+    setGraph,
+    fitCanvasToGraph,
+    refreshGraphList,
+  });
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -352,61 +286,40 @@ export default function App() {
   );
 
   const nodesById = useMemo(() => buildNodeMap(nodes), [nodes]);
-  const childrenByNodeId = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const edge of edges) {
-      const list = map.get(edge.source) ?? [];
-      list.push(edge.target);
-      map.set(edge.source, list);
-    }
-    return map;
-  }, [edges]);
+  const childrenByNodeId = useMemo(() => buildChildrenBySource(edges), [edges]);
 
   const getSubtreeNodeIds = useCallback(
-    (startNodeId: string) => {
-      const ids = new Set<string>();
-      const stack = [startNodeId];
-      while (stack.length > 0) {
-        const current = stack.pop()!;
-        if (ids.has(current)) continue;
-        ids.add(current);
-        const children = childrenByNodeId.get(current) ?? [];
-        for (const child of children) {
-          stack.push(child);
-        }
-      }
-      return ids;
-    },
+    (startNodeId: string) => collectSubtreeNodeIds(startNodeId, childrenByNodeId),
     [childrenByNodeId]
   );
 
   useEffect(() => {
-    if (collapsedTargets.size === 0) return;
-    const existingNodeIds = new Set(nodes.map((node) => node.id));
     setCollapsedTargets((prev) => {
-      const next = new Set<string>();
+      const next = pruneCollapsedTargets(nodes, prev);
+      if (next.size !== prev.size) {
+        return next;
+      }
       for (const id of prev) {
-        if (existingNodeIds.has(id)) {
-          next.add(id);
+        if (!next.has(id)) {
+          return next;
         }
       }
-      return next.size === prev.size ? prev : next;
+      return prev;
     });
-  }, [collapsedTargets.size, nodes]);
+  }, [nodes, setCollapsedTargets]);
 
   useEffect(() => {
-    const existingNodeIds = new Set(nodes.map((node) => node.id));
     setCollapsedEdgeSources((prev) => {
-      let changed = false;
-      const next = new Map<string, string>();
-      for (const [targetId, sourceId] of prev) {
-        if (!existingNodeIds.has(targetId) || !existingNodeIds.has(sourceId) || !collapsedTargets.has(targetId)) {
-          changed = true;
-          continue;
-        }
-        next.set(targetId, sourceId);
+      const next = pruneCollapsedEdgeSources(nodes, collapsedTargets, prev);
+      if (next.size !== prev.size) {
+        return next;
       }
-      return changed ? next : prev;
+      for (const [targetId, sourceId] of prev) {
+        if (next.get(targetId) !== sourceId) {
+          return next;
+        }
+      }
+      return prev;
     });
   }, [collapsedTargets, nodes]);
 
@@ -515,91 +428,37 @@ export default function App() {
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [nodeContextMenu]);
 
-  const sendContinue = useCallback(
-    async (mode: "normal" | "elaboration", highlightedText?: string) => {
-      if (!graphId) return;
-      const userText = mode === "elaboration" ? "Elaborate on this specific point." : composerText.trim();
-      if (!userText) {
-        return;
-      }
-      setError(null);
-      setLoading(true);
-      try {
-        const response = await continueFromNode({
-          graph_id: graphId,
-          continue_from_node_id: selectedNodeId,
-          continue_from_variant_index: getContinueFromVariantIndex(nodesById, selectedNodeId),
-          user_text: userText,
-          mode,
-          highlighted_text: highlightedText ?? null,
-        });
-        appendEntities([response.created_user_node, response.created_assistant_node], response.created_edges);
-        setSelectedNode(response.created_assistant_node.id);
-        setTranscript(response.transcript_window);
-        setResponseSource(response.response_source);
-        setComposerText("");
-        setElaborateAction(null);
-        await refreshGraphList();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to send message");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [appendEntities, composerText, graphId, nodesById, refreshGraphList, selectedNodeId, setResponseSource, setSelectedNode, setTranscript]
-  );
-
-  const sendPanelContinue = useCallback(async () => {
-    if (!graphId || !panelAnchorNodeId || !panelText.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await continueInPanel({
-        graph_id: graphId,
-        anchor_node_id: panelAnchorNodeId,
-        anchor_variant_index: getContinueFromVariantIndex(nodesById, panelAnchorNodeId),
-        user_text: panelText.trim(),
-      });
-      appendEntities([response.created_user_node, response.created_assistant_node], response.created_edges);
-      setPanelAnchorNodeId(response.created_assistant_node.id);
-      setSelectedNode(response.created_assistant_node.id);
-      setTranscript(response.transcript_window);
-      setResponseSource(response.response_source);
-      setPanelText("");
-      await refreshGraphList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to continue in panel");
-    } finally {
-      setLoading(false);
-    }
-  }, [
-    appendEntities,
+  const { sendContinue, sendPanelContinue } = useConversationActions({
     graphId,
-    nodesById,
+    selectedNodeId,
     panelAnchorNodeId,
+    composerText,
     panelText,
+    nodesById,
+    appendEntities,
     refreshGraphList,
-    setResponseSource,
     setSelectedNode,
+    setResponseSource,
     setTranscript,
-  ]);
+    setComposerText,
+    setPanelText,
+    setPanelAnchorNodeId,
+    setLoading,
+    setError,
+    clearElaborateAction: () => setElaborateAction(null),
+  });
 
   const handleDeleteNodeSubtree = useCallback(
     async (nodeId: string) => {
       if (!graphId) return;
       const idsToDelete = getSubtreeNodeIds(nodeId);
       if (idsToDelete.size === 0) return;
-      const prevNodes = nodes;
-      const prevEdges = edges;
-      const nextNodes = prevNodes.filter((node) => !idsToDelete.has(node.id));
-      const nextEdges = prevEdges.filter(
-        (edge) => !idsToDelete.has(edge.source) && !idsToDelete.has(edge.target)
-      );
+      const snapshot = buildDeleteProjection(nodes, edges, idsToDelete);
 
       setLoading(true);
       setError(null);
-      setNodes(nextNodes);
-      setEdges(nextEdges);
+      setNodes(snapshot.nextNodes);
+      setEdges(snapshot.nextEdges);
       for (const id of idsToDelete) {
         manualPositionsRef.current.delete(id);
       }
@@ -620,8 +479,8 @@ export default function App() {
         await deleteNodeSubtree(nodeId);
         await refreshGraphList();
       } catch (err) {
-        setNodes(prevNodes);
-        setEdges(prevEdges);
+        setNodes(snapshot.previousNodes);
+        setEdges(snapshot.previousEdges);
         setError(err instanceof Error ? err.message : "Failed to delete node branch");
       } finally {
         setLoading(false);
@@ -668,123 +527,6 @@ export default function App() {
     },
     [graphId, nodes, setPanelOpen, setSelectedNode, setTranscript]
   );
-
-  const loadGraph = useCallback(
-    async (targetGraphId: string) => {
-      const graph = await getGraph(targetGraphId);
-      localStorage.setItem(GRAPH_STORAGE_KEY, targetGraphId);
-      setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
-      fitCanvasToGraph();
-      setMobileHistoryOpen(false);
-      setPanelOpen(false);
-      setPanelAnchorNodeId(null);
-      setError(null);
-    },
-    [fitCanvasToGraph, setGraph, setPanelOpen]
-  );
-
-  const startNewChat = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const created = await createGraph("Chat Tree");
-      localStorage.setItem(GRAPH_STORAGE_KEY, created.graph_id);
-      const graph = await getGraph(created.graph_id);
-      setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
-      fitCanvasToGraph();
-      setComposerText("");
-      setPanelText("");
-      setPanelOpen(false);
-      setPanelAnchorNodeId(null);
-      setElaborateAction(null);
-      setResponseSource(null);
-      setTranscript([]);
-      await refreshGraphList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start new chat");
-    } finally {
-      setLoading(false);
-    }
-  }, [fitCanvasToGraph, refreshGraphList, setGraph, setPanelOpen, setResponseSource, setTranscript]);
-
-  const selectChatFromHistory = useCallback(
-    async (targetGraphId: string) => {
-      if (targetGraphId === graphId) {
-        setPanelOpen(false);
-        setPanelAnchorNodeId(null);
-        return;
-      }
-      try {
-        setLoading(true);
-        await loadGraph(targetGraphId);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load chat");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [graphId, loadGraph, setPanelOpen]
-  );
-
-  const handleRenameChat = useCallback(
-    async (chat: ChatSummary) => {
-      const nextTitle = window.prompt("Rename chat", chat.title || "Untitled Chat");
-      if (nextTitle === null) return;
-      try {
-        setLoading(true);
-        await renameGraph(chat.graph_id, nextTitle);
-        if (graphId === chat.graph_id) {
-          await loadGraph(chat.graph_id);
-        }
-        await refreshGraphList();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to rename chat");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [graphId, loadGraph, refreshGraphList]
-  );
-
-  const handleDeleteChat = useCallback(
-    async (chat: ChatSummary) => {
-      if (!window.confirm("Delete this chat?")) return;
-      try {
-        setLoading(true);
-        await deleteGraph(chat.graph_id);
-        if (graphId === chat.graph_id) {
-          const remaining = previousChats.filter((item) => item.graph_id !== chat.graph_id);
-          if (remaining.length > 0) {
-            await loadGraph(remaining[0].graph_id);
-          } else {
-            const created = await createGraph("Chat Tree");
-            await loadGraph(created.graph_id);
-          }
-        }
-        await refreshGraphList();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete chat");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [graphId, loadGraph, previousChats, refreshGraphList]
-  );
-
-  const handleDeleteAllChats = useCallback(async () => {
-    if (!window.confirm("Delete all chats?")) return;
-    try {
-      setLoading(true);
-      await deleteAllGraphs();
-      const created = await createGraph("Chat Tree");
-      await loadGraph(created.graph_id);
-      await refreshGraphList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete all chats");
-    } finally {
-      setLoading(false);
-    }
-  }, [loadGraph, refreshGraphList]);
 
   const nodeTypes = useMemo(
     () => ({
@@ -862,73 +604,19 @@ export default function App() {
     setTranscript(synced);
   }, [panelAnchorNodeId, panelOpen, setTranscript, nodes]);
 
-  const hiddenNodeIds = useMemo(() => {
-    const hidden = new Set<string>();
-    for (const targetId of collapsedTargets) {
-      for (const id of getSubtreeNodeIds(targetId)) {
-        hidden.add(id);
-      }
-    }
-    return hidden;
-  }, [collapsedTargets, getSubtreeNodeIds]);
-
-  const collapsedProxyTargets = useMemo(() => {
-    const visibleProxies: string[] = [];
-    for (const targetId of collapsedTargets) {
-      const targetNode = nodesById.get(targetId);
-      if (!targetNode) continue;
-      const parentId = targetNode.data.parentId;
-      if (parentId && hiddenNodeIds.has(parentId)) {
-        continue;
-      }
-      visibleProxies.push(targetId);
-    }
-    return visibleProxies;
-  }, [collapsedTargets, hiddenNodeIds, nodesById]);
-
-  const layoutNodes = useMemo(() => {
-    const edgeParentByTarget = new Map<string, string>();
-    for (const edge of edges) {
-      if (!edgeParentByTarget.has(edge.target)) {
-        edgeParentByTarget.set(edge.target, edge.source);
-      }
-    }
-    const proxyTargetSet = new Set(collapsedProxyTargets);
-    const ordered: Node<NodeData>[] = [];
-    for (const node of nodes) {
-      if (proxyTargetSet.has(node.id)) {
-        const parentId = node.data.parentId ?? edgeParentByTarget.get(node.id) ?? null;
-        const collapsedParentId = collapsedEdgeSources.get(node.id) ?? parentId;
-        ordered.push({
-          id: `${COLLAPSED_NODE_PREFIX}${node.id}`,
-          type: "collapsedNode",
-          position: node.position,
-          data: {
-            role: node.data.role,
-            parentId: collapsedParentId,
-            text: "Folded",
-            variants: null,
-            variantIndex: 0,
-            mode: "normal",
-            highlightedText: null,
-          },
-        } as Node<NodeData>);
-        continue;
-      }
-      if (!hiddenNodeIds.has(node.id)) {
-        ordered.push(node);
-      }
-    }
-    return ordered;
-  }, [collapsedEdgeSources, collapsedProxyTargets, edges, hiddenNodeIds, nodes]);
-
-  const layoutNodeSizes = useMemo(() => {
-    const next = new Map(nodeSizes);
-    for (const targetId of collapsedProxyTargets) {
-      next.set(`${COLLAPSED_NODE_PREFIX}${targetId}`, { width: 132, height: 62 });
-    }
-    return next;
-  }, [collapsedProxyTargets, nodeSizes]);
+  const hiddenNodeIds = useMemo(() => buildHiddenNodeIds(collapsedTargets, getSubtreeNodeIds), [collapsedTargets, getSubtreeNodeIds]);
+  const collapsedProxyTargets = useMemo(
+    () => buildCollapsedProxyTargets(collapsedTargets, hiddenNodeIds, nodesById),
+    [collapsedTargets, hiddenNodeIds, nodesById]
+  );
+  const layoutNodes = useMemo(
+    () => buildLayoutNodes(nodes, edges, hiddenNodeIds, collapsedProxyTargets, collapsedEdgeSources, COLLAPSED_NODE_PREFIX),
+    [collapsedEdgeSources, collapsedProxyTargets, edges, hiddenNodeIds, nodes]
+  );
+  const layoutNodeSizes = useMemo(
+    () => buildLayoutNodeSizes(nodeSizes, collapsedProxyTargets, COLLAPSED_NODE_PREFIX, COLLAPSED_NODE_SIZE),
+    [collapsedProxyTargets, nodeSizes]
+  );
 
   const structure = useMemo(
     () => buildFixedPositions(layoutNodes, layoutNodeSizes, { rowGap, treeGap, siblingGap }),
@@ -985,27 +673,12 @@ export default function App() {
           draggable: false,
           selectable: true,
           hidden: false,
-          style: { visibility: "visible", width: 132, minHeight: 62 },
+          style: { visibility: "visible", width: COLLAPSED_NODE_SIZE.width, minHeight: COLLAPSED_NODE_SIZE.minHeight },
           data: {
             label: "Folded",
             hiddenCount,
             onUnfold: () => {
-              setCollapsedTargets((prev) => {
-                const next = new Set(prev);
-                const subtree = getSubtreeNodeIds(targetId);
-                for (const id of subtree) {
-                  next.delete(id);
-                }
-                return next;
-              });
-              setCollapsedEdgeSources((prev) => {
-                const next = new Map(prev);
-                const subtree = getSubtreeNodeIds(targetId);
-                for (const id of subtree) {
-                  next.delete(id);
-                }
-                return next;
-              });
+              unfoldSubtree(getSubtreeNodeIds(targetId));
             },
           },
         });
@@ -1028,74 +701,23 @@ export default function App() {
       setPanelOpen,
       setSelectedNode,
       setTranscript,
-      setCollapsedEdgeSources,
-      setCollapsedTargets,
       structure,
+      unfoldSubtree,
       openContextPanelForNode,
     ]
   );
 
   const uiEdges: Edge[] = useMemo(() => {
-    const dashArrayFor = (style: (typeof EDGE_LINE_STYLE_OPTIONS)[number]["value"]) => {
-      if (style === "dashed") return "8 6";
-      if (style === "dotted") return "2 6";
-      return undefined;
-    };
-    const styleEdge = (edge: Edge): Edge => {
-      const sourceRole = nodesById.get(edge.source)?.data.role ?? "assistant";
-      const roleConfig =
-        sourceRole === "user"
-          ? { type: userEdgeType, motion: userEdgeMotion, lineStyle: userEdgeLineStyle }
-          : { type: assistantEdgeType, motion: assistantEdgeMotion, lineStyle: assistantEdgeLineStyle };
-      return {
-        ...edge,
-        type: roleConfig.type,
-        animated: roleConfig.motion === "animated",
-        style: {
-          ...(edge.style ?? {}),
-          strokeWidth: 2,
-          strokeDasharray: dashArrayFor(roleConfig.lineStyle),
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#176b87",
-        },
-      } as Edge;
-    };
-
-    const visibleEdges = edges.filter((edge) => !hiddenNodeIds.has(edge.source) && !hiddenNodeIds.has(edge.target));
-    const baseEdges = visibleEdges.map(styleEdge);
-
-    const edgeParentByTarget = new Map<string, string>();
-    for (const edge of edges) {
-      if (!edgeParentByTarget.has(edge.target)) {
-        edgeParentByTarget.set(edge.target, edge.source);
-      }
-    }
-
-    const collapsedEdges = collapsedProxyTargets
-      .map((targetId) => {
-        const sourceId =
-          collapsedEdgeSources.get(targetId) ??
-          edgeParentByTarget.get(targetId) ??
-          nodesById.get(targetId)?.data.parentId ??
-          null;
-        if (!sourceId || hiddenNodeIds.has(sourceId)) {
-          return null;
-        }
-        return styleEdge({
-          id: `collapsed-edge:${sourceId}->${targetId}`,
-          source: sourceId,
-          target: `${COLLAPSED_NODE_PREFIX}${targetId}`,
-        } as Edge);
-      })
-      .filter((edge): edge is Edge => edge !== null);
-
-    const deduped = new Map<string, Edge>();
-    for (const edge of [...baseEdges, ...collapsedEdges]) {
-      deduped.set(edge.id, edge);
-    }
-    return Array.from(deduped.values());
+    return buildProjectedUiEdges(
+      edges,
+      hiddenNodeIds,
+      collapsedProxyTargets,
+      collapsedEdgeSources,
+      nodesById,
+      COLLAPSED_NODE_PREFIX,
+      { type: userEdgeType, motion: userEdgeMotion, lineStyle: userEdgeLineStyle },
+      { type: assistantEdgeType, motion: assistantEdgeMotion, lineStyle: assistantEdgeLineStyle }
+    );
   }, [
     collapsedEdgeSources,
     collapsedProxyTargets,
@@ -1393,31 +1015,12 @@ export default function App() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onEdgeClick={(event, edge) => {
-              if (edge.id.startsWith("collapsed-edge:")) {
-                return;
-              }
-              const sourceRole = nodesById.get(edge.source)?.data.role;
-              if (sourceRole !== "assistant") {
-                return;
-              }
-              if (hiddenNodeIds.has(edge.target)) {
+              if (!isFoldableEdge(edge, nodesById, hiddenNodeIds)) {
                 return;
               }
               event.preventDefault();
               event.stopPropagation();
-              setCollapsedTargets((prev) => {
-                if (prev.has(edge.target)) {
-                  return prev;
-                }
-                const next = new Set(prev);
-                next.add(edge.target);
-                return next;
-              });
-              setCollapsedEdgeSources((prev) => {
-                const next = new Map(prev);
-                next.set(edge.target, edge.source);
-                return next;
-              });
+              collapseByEdge(edge.target, edge.source);
             }}
             onNodeClick={(_, node) => {
               if (node.id.startsWith(COLLAPSED_NODE_PREFIX)) {
@@ -1472,23 +1075,7 @@ export default function App() {
               showZoom={false}
             >
               <ControlButton
-              onClick={() => {
-                if (!reactFlowInstance || !mainRef.current) return;
-                const viewport = reactFlowInstance.getViewport();
-                const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
-                const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
-                const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
-                const visibleWidth = Math.max(120, baseWidth);
-                const visibleHeight = Math.max(120, baseHeight);
-                const centerX = visibleWidth / 2;
-                const centerY = visibleHeight / 2;
-                const flowCenterX = (centerX - viewport.x) / viewport.zoom;
-                  const flowCenterY = (centerY - viewport.y) / viewport.zoom;
-                  const nextZoom = Math.min(MAX_ZOOM, viewport.zoom * ZOOM_BUTTON_FACTOR);
-                  const nextX = centerX - flowCenterX * nextZoom;
-                  const nextY = centerY - flowCenterY * nextZoom;
-                  void reactFlowInstance.setViewport({ x: nextX, y: nextY, zoom: nextZoom }, { duration: 220 });
-                }}
+                onClick={() => zoomIn(ZOOM_BUTTON_FACTOR)}
                 title="Zoom in"
               >
                 <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -1496,23 +1083,7 @@ export default function App() {
                 </svg>
               </ControlButton>
               <ControlButton
-              onClick={() => {
-                if (!reactFlowInstance || !mainRef.current) return;
-                const viewport = reactFlowInstance.getViewport();
-                const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
-                const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
-                const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
-                const visibleWidth = Math.max(120, baseWidth);
-                const visibleHeight = Math.max(120, baseHeight);
-                const centerX = visibleWidth / 2;
-                const centerY = visibleHeight / 2;
-                const flowCenterX = (centerX - viewport.x) / viewport.zoom;
-                  const flowCenterY = (centerY - viewport.y) / viewport.zoom;
-                  const nextZoom = Math.max(MIN_ZOOM, viewport.zoom / ZOOM_BUTTON_FACTOR);
-                  const nextX = centerX - flowCenterX * nextZoom;
-                  const nextY = centerY - flowCenterY * nextZoom;
-                  void reactFlowInstance.setViewport({ x: nextX, y: nextY, zoom: nextZoom }, { duration: 220 });
-                }}
+                onClick={() => zoomOut(ZOOM_BUTTON_FACTOR)}
                 title="Zoom out"
               >
                 <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">

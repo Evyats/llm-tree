@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_session_id
 from app.db.session import get_db
 from app.schemas.message import ContinueChatRequest, ContinueMessageRequest, ContinueResponse
+from app.services.errors import GraphNotFoundError
 from app.services.message_service import continue_message
 from app.services.session_keys import get_api_key
 
@@ -28,7 +29,7 @@ def continue_message_endpoint(
             highlighted_text=payload.highlighted_text,
             runtime_api_key=runtime_key,
         )
-    except ValueError as exc:
+    except GraphNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
@@ -50,5 +51,5 @@ def continue_chat_endpoint(
             highlighted_text=None,
             runtime_api_key=runtime_key,
         )
-    except ValueError as exc:
+    except GraphNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

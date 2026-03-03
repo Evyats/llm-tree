@@ -39,7 +39,7 @@ export default function ComposerBar({
             title={showFullSelectedNodeId ? "Show compact ID" : "Show full ID"}
             aria-label={showFullSelectedNodeId ? "Show compact ID" : "Show full ID"}
           >
-            {showFullSelectedNodeId ? "−" : "+"}
+            {showFullSelectedNodeId ? "-" : "+"}
           </button>
         )}
       </div>
@@ -62,3 +62,4 @@ export default function ComposerBar({
     </footer>
   );
 }
+

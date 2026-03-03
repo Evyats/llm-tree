@@ -8,6 +8,11 @@ class Variants(BaseModel):
     long: str
 
 
+class TranscriptLine(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class NodePayload(BaseModel):
     id: str
     graph_id: str

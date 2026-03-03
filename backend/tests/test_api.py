@@ -125,3 +125,124 @@ def test_delete_all_graphs_endpoint(client: TestClient) -> None:
 
     listed = client.get("/api/graphs").json()
     assert listed == []
+
+
+def test_delete_subtree_removes_all_descendants(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Delete subtree"}).json()["graph_id"]
+    first = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "root",
+            "mode": "normal",
+        },
+    ).json()
+    anchor_a = first["created_assistant_node"]["id"]
+
+    second = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": anchor_a,
+            "user_text": "branch-1",
+            "mode": "normal",
+        },
+    ).json()
+    anchor_b = second["created_assistant_node"]["id"]
+
+    third = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": anchor_b,
+            "user_text": "branch-2",
+            "mode": "normal",
+        },
+    ).json()
+    mid_user = third["created_user_node"]["parent_id"]
+    assert mid_user is not None
+
+    delete_response = client.delete(f"/api/nodes/{mid_user}/subtree")
+    assert delete_response.status_code == 200
+
+    graph = client.get(f"/api/graphs/{graph_id}").json()
+    node_ids = {node["id"] for node in graph["nodes"]}
+    assert mid_user not in node_ids
+    assert third["created_assistant_node"]["id"] not in node_ids
+
+
+def test_variant_update_returns_409_after_branching(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Variant lock"}).json()["graph_id"]
+    base = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "hello",
+            "mode": "normal",
+        },
+    ).json()
+    assistant_id = base["created_assistant_node"]["id"]
+
+    _ = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": assistant_id,
+            "user_text": "child",
+            "mode": "normal",
+        },
+    ).json()
+
+    response = client.patch(f"/api/nodes/{assistant_id}/variant-index", json={"variant_index": 2})
+    assert response.status_code == 409
+
+
+def test_continue_from_null_anchor_creates_disconnected_root_branch(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Disconnected roots"}).json()["graph_id"]
+    _ = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "first",
+            "mode": "normal",
+        },
+    ).json()
+    second = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "second",
+            "mode": "normal",
+        },
+    )
+    assert second.status_code == 200
+    payload = second.json()
+    assert payload["created_user_node"]["parent_id"] is None
+    assert len(payload["created_edges"]) == 1
+    assert payload["created_edges"][0]["edge_type"] == "reply"
+
+
+def test_continue_response_transcript_window_has_typed_shape(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Transcript shape"}).json()["graph_id"]
+    response = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "shape",
+            "mode": "normal",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    transcript = payload["transcript_window"]
+    assert isinstance(transcript, list)
+    assert transcript
+    for line in transcript:
+        assert set(line.keys()) == {"role", "content"}
+        assert line["role"] in {"user", "assistant"}
+        assert isinstance(line["content"], str)

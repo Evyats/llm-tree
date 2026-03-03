@@ -18,6 +18,7 @@ from app.services.conversation import (
     list_graphs,
     rename_graph,
 )
+from app.services.errors import GraphNotFoundError
 
 router = APIRouter(prefix="/graphs", tags=["graphs"])
 
@@ -40,7 +41,7 @@ def list_graphs_endpoint(db: Session = Depends(get_db)) -> list[GraphListItem]:
 def get_graph_endpoint(graph_id: str, db: Session = Depends(get_db)) -> GraphResponse:
     try:
         gid, title, nodes, edges = get_graph_payload(db, graph_id)
-    except ValueError as exc:
+    except GraphNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return GraphResponse(graph_id=gid, title=title, nodes=nodes, edges=edges)
 
@@ -49,7 +50,7 @@ def get_graph_endpoint(graph_id: str, db: Session = Depends(get_db)) -> GraphRes
 def rename_graph_endpoint(graph_id: str, payload: RenameGraphRequest, db: Session = Depends(get_db)) -> GraphListItem:
     try:
         graph = rename_graph(db, graph_id, payload.title)
-    except ValueError as exc:
+    except GraphNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return GraphListItem(graph_id=graph.id, title=graph.title, updated_at=graph.updated_at.isoformat())
 
@@ -58,7 +59,7 @@ def rename_graph_endpoint(graph_id: str, payload: RenameGraphRequest, db: Sessio
 def delete_graph_endpoint(graph_id: str, db: Session = Depends(get_db)) -> dict[str, bool]:
     try:
         delete_graph(db, graph_id)
-    except ValueError as exc:
+    except GraphNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True}
 

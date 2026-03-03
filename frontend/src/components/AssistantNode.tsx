@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from "reactflow";
 
 import { normalizeSelectionToWordBoundaries } from "../features/selection/normalizeSelection";
 import type { NodeData } from "../store/useGraphStore";
+import NodeActionButton from "./common/NodeActionButton";
 
 interface AssistantNodeData extends NodeData {
   onCycleVariant?: (nodeId: string, direction: -1 | 1) => void;
@@ -84,50 +85,28 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
           <div className="text-[11px] font-semibold uppercase tracking-wide text-accent">Assistant</div>
           {!data.variantLocked && (
             <>
-              <button
+              <NodeActionButton
                 className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
+                onClick={() => {
                   data.onCycleVariant?.(id, -1);
                 }}
-                type="button"
-                aria-label="Previous variant"
+                ariaLabel="Previous variant"
               >
                 <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M5 12L10 7L15 12" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-              </button>
-              <button
+              </NodeActionButton>
+              <NodeActionButton
                 className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
+                onClick={() => {
                   data.onCycleVariant?.(id, 1);
                 }}
-                type="button"
-                aria-label="Next variant"
+                ariaLabel="Next variant"
               >
                 <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M5 8L10 13L15 8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-              </button>
+              </NodeActionButton>
             </>
           )}
         </div>
@@ -140,30 +119,19 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
           </div>
         )}
         <div className="flex items-center gap-2">
-          <button
+          <NodeActionButton
             className="rounded bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
+            onClick={() => {
               data.onOpenPanel?.(id);
             }}
-            type="button"
-            aria-label="Open context panel"
+            ariaLabel="Open context panel"
             title="Open context panel"
           >
             <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
               <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-          </button>
+          </NodeActionButton>
         </div>
       </div>
       <p

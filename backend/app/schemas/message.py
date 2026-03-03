@@ -1,7 +1,7 @@
 from typing import Literal
 from pydantic import BaseModel, Field
 
-from app.schemas.common import EdgePayload, NodePayload
+from app.schemas.common import EdgePayload, NodePayload, TranscriptLine
 
 
 class ContinueMessageRequest(BaseModel):
@@ -25,7 +25,7 @@ class ContinueResponse(BaseModel):
     created_assistant_node: NodePayload
     created_edges: list[EdgePayload]
     response_source: Literal["live", "fallback"]
-    transcript_window: list[dict[str, str]] | None = None
+    transcript_window: list[TranscriptLine] | None = None
 
 
 class SetApiKeyRequest(BaseModel):

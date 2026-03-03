@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Edge, Node } from "reactflow";
 
+import type { TranscriptLine } from "../features/chat/types";
 import type { GraphEdgePayload, GraphNodePayload } from "../types/graph";
 import { edgePayloadToFlowEdge, nodePayloadToFlowNode } from "./mappers";
 
@@ -24,7 +25,7 @@ interface GraphState {
   edges: Edge[];
   selectedNodeId: string | null;
   panelOpen: boolean;
-  transcript: Array<{ role: string; content: string }>;
+  transcript: TranscriptLine[];
   responseSource: "live" | "fallback" | null;
   setGraph: (graphId: string, title: string, nodes: GraphNodePayload[], edges: GraphEdgePayload[]) => void;
   appendEntities: (nodes: GraphNodePayload[], edges: GraphEdgePayload[]) => void;
@@ -33,7 +34,7 @@ interface GraphState {
   setEdges: (edges: Edge[]) => void;
   updateNodeVariant: (nodeId: string, variantIndex: number) => void;
   setPanelOpen: (open: boolean) => void;
-  setTranscript: (transcript: Array<{ role: string; content: string }>) => void;
+  setTranscript: (transcript: TranscriptLine[]) => void;
   setResponseSource: (source: "live" | "fallback" | null) => void;
 }
 

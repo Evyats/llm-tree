@@ -1,7 +1,4 @@
-interface TranscriptLine {
-  role: string;
-  content: string;
-}
+import type { TranscriptLine } from "../../features/chat/types";
 
 interface ContextPanelProps {
   open: boolean;
