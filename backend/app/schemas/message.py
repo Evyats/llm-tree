@@ -7,6 +7,7 @@ from app.schemas.common import EdgePayload, NodePayload
 class ContinueMessageRequest(BaseModel):
     graph_id: str
     continue_from_node_id: str | None = None
+    continue_from_variant_index: int | None = Field(default=None, ge=0, le=2)
     user_text: str = Field(min_length=1)
     mode: Literal["normal", "elaboration"] = "normal"
     highlighted_text: str | None = None
@@ -15,6 +16,7 @@ class ContinueMessageRequest(BaseModel):
 class ContinueChatRequest(BaseModel):
     graph_id: str
     anchor_node_id: str
+    anchor_variant_index: int | None = Field(default=None, ge=0, le=2)
     user_text: str = Field(min_length=1)
 
 
@@ -32,4 +34,3 @@ class SetApiKeyRequest(BaseModel):
 
 class UpdateVariantRequest(BaseModel):
     variant_index: int = Field(ge=0, le=2)
-

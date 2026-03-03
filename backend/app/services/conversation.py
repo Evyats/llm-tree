@@ -5,47 +5,11 @@ from sqlalchemy.orm import Session
 from app.models.edge import Edge
 from app.models.graph import Graph
 from app.models.node import Node
-from app.schemas.common import EdgePayload, NodePayload, Variants
+from app.schemas.common import EdgePayload, NodePayload
 from app.services.context import node_display_text, path_to_node, transcript_from_path
 from app.services.layout import assistant_position, next_user_position
 from app.services.llm import generate_variants
-
-
-def to_node_payload(node: Node) -> NodePayload:
-    variants = None
-    text = node.user_text or ""
-    if node.role == "assistant":
-        variants = Variants(
-            short=node.variant_short or "",
-            medium=node.variant_medium or "",
-            long=node.variant_long or "",
-        )
-        variant_map = [variants.short, variants.medium, variants.long]
-        idx = max(0, min(2, node.variant_index))
-        text = variant_map[idx]
-    return NodePayload(
-        id=node.id,
-        graph_id=node.graph_id,
-        role=node.role,  # type: ignore[arg-type]
-        parent_id=node.parent_id,
-        text=text,
-        variants=variants,
-        variant_index=node.variant_index,
-        position_x=node.position_x,
-        position_y=node.position_y,
-        mode=node.mode,
-        highlighted_text=node.highlighted_text,
-    )
-
-
-def to_edge_payload(edge: Edge) -> EdgePayload:
-    return EdgePayload(
-        id=edge.id,
-        graph_id=edge.graph_id,
-        source_node_id=edge.source_node_id,
-        target_node_id=edge.target_node_id,
-        edge_type=edge.edge_type,
-    )
+from app.services.payloads import to_edge_payload, to_node_payload
 
 
 def create_graph(db: Session, title: str | None = None) -> Graph:
@@ -102,12 +66,18 @@ def continue_conversation(
     db: Session,
     graph_id: str,
     continue_from_node_id: str | None,
+    continue_from_variant_index: int | None,
     user_text: str,
     mode: str,
     highlighted_text: str | None,
     runtime_api_key: str | None,
 ) -> tuple[NodePayload, NodePayload, list[EdgePayload], str, list[dict[str, str]]]:
     graph = get_graph_or_404(db, graph_id)
+    if continue_from_node_id and continue_from_variant_index is not None:
+        anchor = db.get(Node, continue_from_node_id)
+        if anchor is not None and anchor.role == "assistant":
+            anchor.variant_index = max(0, min(2, continue_from_variant_index))
+            db.flush()
     context_path = path_to_node(db, continue_from_node_id)
     transcript = transcript_from_path(context_path)
 

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -19,7 +20,11 @@ def update_variant_endpoint(
         raise HTTPException(status_code=404, detail="Node not found")
     if node.role != "assistant":
         raise HTTPException(status_code=400, detail="Only assistant nodes support variants")
+    has_user_child = db.scalar(
+        select(Node.id).where(Node.parent_id == node.id, Node.role == "user").limit(1)
+    )
+    if has_user_child:
+        raise HTTPException(status_code=409, detail="Variants are locked after branching from this node")
     node.variant_index = payload.variant_index
     db.commit()
     return {"ok": True}
-

@@ -3,9 +3,14 @@ import { Handle, Position, type NodeProps } from "reactflow";
 
 import type { NodeData } from "../store/useGraphStore";
 
-function UserNode({ data, selected }: NodeProps<NodeData>) {
+interface UserNodeData extends NodeData {
+  onOpenPanel?: (nodeId: string) => void;
+}
+
+function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
   return (
     <div
+      onDoubleClick={(event) => event.stopPropagation()}
       className={`rounded-2xl border bg-paper px-4 py-3 shadow-float transition-all ${
         selected ? "border-accent" : "border-stone-300"
       }`}
@@ -13,7 +18,21 @@ function UserNode({ data, selected }: NodeProps<NodeData>) {
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-warm">User</div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-warm">User</div>
+        <button
+          className="rounded bg-warm px-2 py-1 text-xs text-white hover:opacity-90"
+          onClick={() => data.onOpenPanel?.(id)}
+          type="button"
+          aria-label="Open context panel"
+          title="Open context panel"
+        >
+          <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{data.text}</p>
     </div>
   );

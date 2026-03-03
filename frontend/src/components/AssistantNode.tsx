@@ -38,6 +38,7 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
 
   return (
     <div
+      onDoubleClick={(event) => event.stopPropagation()}
       className={`rounded-2xl border bg-white px-4 py-3 shadow-float transition-all duration-300 ${
         selected ? "border-accent" : "border-stone-300"
       }`}
@@ -48,26 +49,30 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-accent">Assistant</div>
-          <button
-            className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
-            onClick={() => data.onCycleVariant?.(id, -1)}
-            type="button"
-            aria-label="Previous variant"
-          >
-            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M5 12L10 7L15 12" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
-            onClick={() => data.onCycleVariant?.(id, 1)}
-            type="button"
-            aria-label="Next variant"
-          >
-            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M5 8L10 13L15 8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          {!data.variantLocked && (
+            <>
+              <button
+                className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+                onClick={() => data.onCycleVariant?.(id, -1)}
+                type="button"
+                aria-label="Previous variant"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M5 12L10 7L15 12" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+                onClick={() => data.onCycleVariant?.(id, 1)}
+                type="button"
+                aria-label="Next variant"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M5 8L10 13L15 8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
