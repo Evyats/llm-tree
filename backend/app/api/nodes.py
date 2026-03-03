@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.message import UpdateVariantRequest
+from app.schemas.message import ExtractPathResponse, UpdateVariantRequest
 from app.services.errors import InvalidNodeRoleError, NodeNotFoundError, VariantLockedError
-from app.services.node_service import delete_node_subtree, update_variant_index
+from app.services.node_service import delete_node_subtree, extract_path_to_new_tree, update_variant_index
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
@@ -36,3 +36,15 @@ def delete_node_subtree_endpoint(
     except NodeNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True}
+
+
+@router.post("/{node_id}/extract-path", response_model=ExtractPathResponse)
+def extract_path_endpoint(
+    node_id: str,
+    db: Session = Depends(get_db),
+) -> ExtractPathResponse:
+    try:
+        nodes, edges = extract_path_to_new_tree(db, node_id=node_id)
+    except NodeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ExtractPathResponse(created_nodes=nodes, created_edges=edges)

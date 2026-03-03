@@ -246,3 +246,44 @@ def test_continue_response_transcript_window_has_typed_shape(client: TestClient)
         assert set(line.keys()) == {"role", "content"}
         assert line["role"] in {"user", "assistant"}
         assert isinstance(line["content"], str)
+
+
+def test_extract_path_creates_new_disconnected_chain(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Extract path"}).json()["graph_id"]
+    first = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "root question",
+            "mode": "normal",
+        },
+    ).json()
+    a1 = first["created_assistant_node"]["id"]
+    second = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": a1,
+            "user_text": "follow up",
+            "mode": "normal",
+        },
+    ).json()
+    u2 = second["created_user_node"]["id"]
+
+    extracted = client.post(f"/api/nodes/{u2}/extract-path")
+    assert extracted.status_code == 200
+    payload = extracted.json()
+
+    created_nodes = payload["created_nodes"]
+    created_edges = payload["created_edges"]
+    assert len(created_nodes) == 3  # root user -> assistant -> selected user
+    assert len(created_edges) == 2
+    assert created_nodes[0]["parent_id"] is None
+    assert created_nodes[1]["parent_id"] == created_nodes[0]["id"]
+    assert created_nodes[2]["parent_id"] == created_nodes[1]["id"]
+
+    graph = client.get(f"/api/graphs/{graph_id}").json()
+    all_ids = {node["id"] for node in graph["nodes"]}
+    for node in created_nodes:
+        assert node["id"] in all_ids

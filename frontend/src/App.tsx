@@ -16,6 +16,7 @@ import "reactflow/dist/style.css";
 
 import {
   deleteNodeSubtree,
+  extractNodePath,
   getGraph,
   setSessionApiKey,
   updateVariant,
@@ -132,7 +133,7 @@ export default function App() {
   const [wheelHoverNodeId, setWheelHoverNodeId] = useState<string | null>(null);
   const [wheelHoverProgress, setWheelHoverProgress] = useState(0);
   const [wheelHoverActive, setWheelHoverActive] = useState(false);
-  const [nodeContextMenu, setNodeContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+  const [nodeContextMenuNodeId, setNodeContextMenuNodeId] = useState<string | null>(null);
   const {
     collapsedTargets,
     collapsedEdgeSources,
@@ -144,7 +145,6 @@ export default function App() {
   } = useCollapsedBranches();
   const composerInputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
-  const nodeContextMenuRef = useRef<HTMLDivElement>(null);
 
   const manualPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodesRef = useRef(nodes);
@@ -412,21 +412,19 @@ export default function App() {
   useEffect(() => () => clearAssistantWheelHover(), [clearAssistantWheelHover]);
 
   useEffect(() => {
-    if (!nodeContextMenu) {
+    if (!nodeContextMenuNodeId) {
       return;
     }
     const onPointerDown = (event: PointerEvent) => {
-      if (!nodeContextMenuRef.current) {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest('[data-node-action-button="true"]')) {
         return;
       }
-      if (event.target instanceof globalThis.Node && nodeContextMenuRef.current.contains(event.target)) {
-        return;
-      }
-      setNodeContextMenu(null);
+      setNodeContextMenuNodeId(null);
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [nodeContextMenu]);
+  }, [nodeContextMenuNodeId]);
 
   const { sendContinue, sendPanelContinue } = useConversationActions({
     graphId,
@@ -473,7 +471,7 @@ export default function App() {
       if (elaborateAction && idsToDelete.has(elaborateAction.nodeId)) {
         setElaborateAction(null);
       }
-      setNodeContextMenu(null);
+      setNodeContextMenuNodeId(null);
 
       try {
         await deleteNodeSubtree(nodeId);
@@ -501,6 +499,25 @@ export default function App() {
       setSelectedNode,
       setTranscript,
     ]
+  );
+
+  const handleExtractPathToTree = useCallback(
+    async (nodeId: string) => {
+      if (!graphId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await extractNodePath(nodeId);
+        appendEntities(response.created_nodes, response.created_edges);
+        setNodeContextMenuNodeId(null);
+        await refreshGraphList();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to extract node path");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [appendEntities, graphId, refreshGraphList]
   );
 
   const openContextPanelForNode = useCallback(
@@ -642,6 +659,14 @@ export default function App() {
           onOpenPanel: (nodeId: string) => {
             void openContextPanelForNode(nodeId);
           },
+          contextMenuOpen: nodeContextMenuNodeId === node.id,
+          onDeleteBranch: (nodeId: string) => {
+            void handleDeleteNodeSubtree(nodeId);
+          },
+          onPlaceholderTwo: () => {
+            void handleExtractPathToTree(node.id);
+          },
+          onPlaceholderThree: () => {},
           onHoverWheelStart: (nodeId: string) => {
             handleAssistantHoverStart(nodeId);
           },
@@ -653,6 +678,10 @@ export default function App() {
           onCycleVariant: (nodeId: string, direction: -1 | 1) => void;
           onSelectElaboration: (nodeId: string, text: string, x: number, y: number) => void;
           onOpenPanel: (nodeId: string) => void;
+          contextMenuOpen: boolean;
+          onDeleteBranch: (nodeId: string) => void;
+          onPlaceholderTwo: () => void;
+          onPlaceholderThree: () => void;
           onHoverWheelStart: (nodeId: string) => void;
           onHoverWheelEnd: (nodeId: string) => void;
           onHoverWheelScroll: (nodeId: string, deltaY: number) => boolean;
@@ -703,6 +732,8 @@ export default function App() {
       setTranscript,
       structure,
       unfoldSubtree,
+      nodeContextMenuNodeId,
+      handleExtractPathToTree,
       openContextPanelForNode,
     ]
   );
@@ -1027,7 +1058,7 @@ export default function App() {
                 return;
               }
               setSelectedNode(node.id);
-              setNodeContextMenu(null);
+              setNodeContextMenuNodeId(null);
             }}
             onNodeContextMenu={(event, node) => {
               if (node.id.startsWith(COLLAPSED_NODE_PREFIX)) {
@@ -1038,14 +1069,14 @@ export default function App() {
               event.preventDefault();
               event.stopPropagation();
               setSelectedNode(node.id);
-              setNodeContextMenu({ nodeId: node.id, x: event.clientX, y: event.clientY });
+              setNodeContextMenuNodeId(node.id);
             }}
             onNodeDoubleClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
             }}
             onPaneClick={() => {
-              setNodeContextMenu(null);
+              setNodeContextMenuNodeId(null);
               if (panelOpen) {
                 return;
               }
@@ -1066,7 +1097,7 @@ export default function App() {
             zoomOnDoubleClick={!fixedMode}
           >
             <Background color="#d6d0c5" gap={18} />
-            <MiniMap position="top-right" />
+            {!panelOpen && <MiniMap position="top-right" />}
             <Controls
               position="top-left"
               fitViewOptions={FIT_VIEW_OPTIONS}
@@ -1177,29 +1208,6 @@ export default function App() {
         }}
         onClose={() => setElaborateAction(null)}
       />
-
-      {nodeContextMenu && (
-        <div
-          ref={nodeContextMenuRef}
-          className="fixed z-[1500] min-w-36 rounded-md border border-stone-300 bg-paper/95 p-1 shadow-float backdrop-blur"
-          style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            className="block w-full rounded px-2 py-1 text-left text-xs text-red-700 hover:bg-red-50"
-            onClick={() => void handleDeleteNodeSubtree(nodeContextMenu.nodeId)}
-            type="button"
-          >
-            Delete Branch
-          </button>
-          <button className="mt-1 block w-full rounded px-2 py-1 text-left text-xs text-stone-700 hover:bg-stone-100" type="button">
-            Placeholder 2
-          </button>
-          <button className="mt-1 block w-full rounded px-2 py-1 text-left text-xs text-stone-700 hover:bg-stone-100" type="button">
-            Placeholder 3
-          </button>
-        </div>
-      )}
 
       {wheelHoverNodeId && (
         <div className="pointer-events-none absolute left-1/2 top-14 z-[1400] w-72 -translate-x-1/2 rounded-md border border-stone-300 bg-paper/95 px-3 py-1 shadow-float backdrop-blur">

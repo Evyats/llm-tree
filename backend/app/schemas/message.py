@@ -28,6 +28,11 @@ class ContinueResponse(BaseModel):
     transcript_window: list[TranscriptLine] | None = None
 
 
+class ExtractPathResponse(BaseModel):
+    created_nodes: list[NodePayload]
+    created_edges: list[EdgePayload]
+
+
 class SetApiKeyRequest(BaseModel):
     api_key: str = Field(min_length=10)
 
