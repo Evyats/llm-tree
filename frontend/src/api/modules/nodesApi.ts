@@ -6,3 +6,9 @@ export async function updateVariant(nodeId: string, variantIndex: number): Promi
     body: JSON.stringify({ variant_index: variantIndex }),
   });
 }
+
+export async function deleteNodeSubtree(nodeId: string): Promise<void> {
+  await request(`/api/nodes/${nodeId}/subtree`, {
+    method: "DELETE",
+  });
+}

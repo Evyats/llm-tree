@@ -17,7 +17,7 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
   const measureRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLParagraphElement>(null);
   const sizeCacheRef = useRef<Map<string, { w: number; h: number }>>(new Map());
-  const [size, setSize] = useState({ w: 360, h: 140 });
+  const [size, setSize] = useState({ w: 320, h: 140 });
   const wheelEligible = !data.variantLocked && !!data.variants;
 
   useLayoutEffect(() => {
@@ -30,7 +30,7 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
     if (!measureRef.current) {
       return;
     }
-    const nextW = Math.min(880, Math.max(280, measureRef.current.scrollWidth + 44));
+    const nextW = Math.min(700, Math.max(240, measureRef.current.scrollWidth + 36));
     const nextH = Math.min(680, Math.max(110, measureRef.current.scrollHeight + 62));
     const measured = { w: nextW, h: nextH };
     sizeCacheRef.current.set(cacheKey, measured);
@@ -179,7 +179,7 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
         <p
           ref={measureRef}
           className="inline-block whitespace-pre-wrap text-sm leading-relaxed"
-          style={{ width: "fit-content", maxWidth: "820px" }}
+          style={{ width: "fit-content", maxWidth: "660px" }}
         >
           {data.text}
         </p>
