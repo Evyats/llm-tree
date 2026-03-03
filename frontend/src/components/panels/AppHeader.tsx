@@ -5,6 +5,7 @@ interface AppHeaderProps {
   onApiKeyInputChange: (value: string) => void;
   onSaveApiKey: () => void;
   onNewChat: () => void;
+  onToggleHistory?: () => void;
 }
 
 export default function AppHeader({
@@ -14,19 +15,31 @@ export default function AppHeader({
   onApiKeyInputChange,
   onSaveApiKey,
   onNewChat,
+  onToggleHistory,
 }: AppHeaderProps) {
   return (
-    <header className="absolute left-0 top-0 z-20 flex w-full items-center justify-between gap-3 border-b border-stone-300 bg-paper/85 px-4 py-2 backdrop-blur">
-      <div className="flex items-center gap-3">
+    <header className="z-20 flex flex-wrap items-center justify-between gap-2 border-b border-stone-300 bg-paper/85 px-3 py-2 backdrop-blur md:flex-nowrap md:px-4">
+      <div className="flex min-w-0 items-center gap-2 md:gap-3">
+        {onToggleHistory && (
+          <button
+            className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 md:hidden"
+            onClick={onToggleHistory}
+            type="button"
+            aria-label="Open chat history"
+            title="Open chat history"
+          >
+            Chats
+          </button>
+        )}
         <h1 className="text-sm font-semibold">{title}</h1>
         {responseSource && <span className="rounded bg-stone-100 px-2 py-1 text-xs">source: {responseSource}</span>}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex w-full items-center gap-2 md:w-auto">
         <button className="rounded bg-stone-800 px-3 py-1 text-xs text-white" onClick={onNewChat} type="button">
           New Chat
         </button>
         <input
-          className="w-64 rounded border border-stone-300 px-2 py-1 text-xs"
+          className="min-w-0 flex-1 rounded border border-stone-300 px-2 py-1 text-xs md:w-64 md:flex-none"
           placeholder="Optional session OpenAI key"
           type="password"
           value={apiKeyInput}

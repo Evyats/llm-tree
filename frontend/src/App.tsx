@@ -6,8 +6,6 @@ import ReactFlow, {
   MiniMap,
   applyEdgeChanges,
   applyNodeChanges,
-  getNodesBounds,
-  getViewportForBounds,
   type Edge,
   type EdgeChange,
   type Node,
@@ -58,10 +56,8 @@ interface ElaborateAction {
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 2.5;
 const CONTEXT_PANEL_WIDTH = 420;
-const FOOTER_OVERLAY_HEIGHT = 52;
-const FIT_VIEW_BUTTON_PADDING = 0.4;
+const DEFAULT_FIT_VIEW_BUTTON_PADDING = 0.05;
 const ZOOM_BUTTON_FACTOR = 1.4;
-const DEFAULT_ASSISTANT_WHEEL_HOLD_MS = 100;
 const ASSISTANT_WHEEL_STEP_COOLDOWN_MS = 140;
 const DEFAULT_EDGE_STYLE = "default";
 const EDGE_STYLE_OPTIONS = [
@@ -69,6 +65,30 @@ const EDGE_STYLE_OPTIONS = [
   { value: "straight", label: "Straight" },
   { value: "step", label: "Step" },
 ] as const;
+const NODE_ORIGIN_X = 0.5;
+const NODE_ORIGIN_Y = 0;
+
+function getExactCenteredViewport(
+  bounds: { x: number; y: number; width: number; height: number },
+  viewportWidth: number,
+  viewportHeight: number,
+  minZoom: number,
+  maxZoom: number,
+  padding: number
+) {
+  const safeWidth = Math.max(1, bounds.width);
+  const safeHeight = Math.max(1, bounds.height);
+  const scaleX = viewportWidth / (safeWidth * (1 + padding * 2));
+  const scaleY = viewportHeight / (safeHeight * (1 + padding * 2));
+  const zoom = Math.max(minZoom, Math.min(maxZoom, Math.min(scaleX, scaleY)));
+  const centerX = bounds.x + safeWidth / 2;
+  const centerY = bounds.y + safeHeight / 2;
+  return {
+    x: viewportWidth / 2 - centerX * zoom,
+    y: viewportHeight / 2 - centerY * zoom,
+    zoom,
+  };
+}
 
 export default function App() {
   const {
@@ -101,23 +121,21 @@ export default function App() {
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [fixedMode, setFixedMode] = useState(true);
   const [nodeSizes, setNodeSizes] = useState<Map<string, { width: number; height: number }>>(new Map());
+  const [fitViewPadding, setFitViewPadding] = useState(DEFAULT_FIT_VIEW_BUTTON_PADDING);
   const [rowGap, setRowGap] = useState(FIXED_ROW_GAP);
   const [treeGap, setTreeGap] = useState(FIXED_TREE_GAP);
   const [siblingGap, setSiblingGap] = useState(FIXED_MIN_COL_GAP);
-  const [assistantWheelHoldMs, setAssistantWheelHoldMs] = useState(DEFAULT_ASSISTANT_WHEEL_HOLD_MS);
   const [edgeStyleIndex, setEdgeStyleIndex] = useState(0);
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [wheelHoverNodeId, setWheelHoverNodeId] = useState<string | null>(null);
-  const [wheelHoverProgress, setWheelHoverProgress] = useState(0);
   const [wheelHoverActive, setWheelHoverActive] = useState(false);
   const composerInputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
 
   const manualPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodesRef = useRef(nodes);
-  const wheelHoverStartRef = useRef<number>(0);
-  const wheelHoverRafRef = useRef<number | null>(null);
   const wheelLastStepAtRef = useRef(0);
 
   useEffect(() => {
@@ -169,22 +187,45 @@ export default function App() {
         if (!reactFlowInstance || !mainRef.current) return;
         const rfNodes = reactFlowInstance.getNodes().filter((node) => !node.hidden);
         if (rfNodes.length === 0) return;
-
-        const bounds = getNodesBounds(rfNodes);
-        const visibleWidth = Math.max(120, mainRef.current.clientWidth - (panelOpen ? CONTEXT_PANEL_WIDTH : 0));
-        const visibleHeight = Math.max(120, mainRef.current.clientHeight - FOOTER_OVERLAY_HEIGHT);
-        const viewport = getViewportForBounds(
+        let minX = Number.POSITIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        for (const node of rfNodes) {
+          const measuredNode = node as typeof node & { measured?: { width?: number; height?: number } };
+          const width = node.width ?? measuredNode.measured?.width ?? 0;
+          const height = node.height ?? measuredNode.measured?.height ?? 0;
+          if (width <= 0 || height <= 0) continue;
+          const left = node.position.x - width * NODE_ORIGIN_X;
+          const top = node.position.y - height * NODE_ORIGIN_Y;
+          minX = Math.min(minX, left);
+          minY = Math.min(minY, top);
+          maxX = Math.max(maxX, left + width);
+          maxY = Math.max(maxY, top + height);
+        }
+        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+          return;
+        }
+        const bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+        const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
+        const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
+        const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
+        const contextPanelWidth =
+          panelOpen && window.matchMedia("(min-width: 640px)").matches ? CONTEXT_PANEL_WIDTH : 0;
+        const visibleWidth = Math.max(120, baseWidth - contextPanelWidth);
+        const visibleHeight = Math.max(120, baseHeight);
+        const viewport = getExactCenteredViewport(
           bounds,
           visibleWidth,
           visibleHeight,
           MIN_ZOOM,
           MAX_ZOOM,
-          FIT_VIEW_BUTTON_PADDING
+          fitViewPadding
         );
         void reactFlowInstance.setViewport(viewport, { duration: FIT_VIEW_OPTIONS.duration ?? 280 });
       });
     });
-  }, [panelOpen, reactFlowInstance]);
+  }, [fitViewPadding, panelOpen, reactFlowInstance]);
 
   const updateLayoutPanelPosition = useCallback(() => {
     const mainEl = mainRef.current;
@@ -288,45 +329,18 @@ export default function App() {
   );
 
   const clearAssistantWheelHover = useCallback(() => {
-    if (wheelHoverRafRef.current !== null) {
-      cancelAnimationFrame(wheelHoverRafRef.current);
-      wheelHoverRafRef.current = null;
-    }
     setWheelHoverNodeId(null);
-    setWheelHoverProgress(0);
     setWheelHoverActive(false);
-    wheelHoverStartRef.current = 0;
     wheelLastStepAtRef.current = 0;
   }, []);
 
   const handleAssistantHoverStart = useCallback(
     (nodeId: string) => {
-      if (wheelHoverRafRef.current !== null) {
-        cancelAnimationFrame(wheelHoverRafRef.current);
-        wheelHoverRafRef.current = null;
-      }
       setWheelHoverNodeId(nodeId);
-      setWheelHoverProgress(0);
-      setWheelHoverActive(false);
-      wheelHoverStartRef.current = performance.now();
+      setWheelHoverActive(true);
       wheelLastStepAtRef.current = 0;
-      // Render immediate 0% state before first animation frame.
-      setWheelHoverProgress(0.001);
-
-      const tick = () => {
-        const elapsed = performance.now() - wheelHoverStartRef.current;
-        const progress = Math.max(0, Math.min(1, elapsed / assistantWheelHoldMs));
-        setWheelHoverProgress(progress);
-        if (progress >= 1) {
-          setWheelHoverActive(true);
-          wheelHoverRafRef.current = null;
-          return;
-        }
-        wheelHoverRafRef.current = requestAnimationFrame(tick);
-      };
-      wheelHoverRafRef.current = requestAnimationFrame(tick);
     },
-    [assistantWheelHoldMs]
+    []
   );
 
   const handleAssistantHoverEnd = useCallback(
@@ -422,6 +436,7 @@ export default function App() {
       localStorage.setItem(GRAPH_STORAGE_KEY, targetGraphId);
       setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
       fitCanvasToGraph();
+      setMobileHistoryOpen(false);
       setPanelOpen(false);
       setError(null);
     },
@@ -602,6 +617,13 @@ export default function App() {
     }
   }, [assistantWithBranch, clearAssistantWheelHover, nodesById, wheelHoverNodeId]);
 
+  useEffect(() => {
+    if (!panelOpen || !selectedNodeId) return;
+    const synced = buildTranscriptUntilNode(nodesRef.current, selectedNodeId);
+    if (synced.length === 0) return;
+    setTranscript(synced);
+  }, [panelOpen, selectedNodeId, setTranscript, nodes]);
+
   const uiNodes: Node<NodeData>[] = useMemo(
     () =>
       nodes.map((node) => ({
@@ -619,7 +641,7 @@ export default function App() {
           onOpenPanel: (nodeId: string) => {
             setSelectedNode(nodeId);
             setPanelOpen(true);
-            setTranscript(buildTranscriptUntilNode(nodes, nodeId));
+            setTranscript(buildTranscriptUntilNode(nodesRef.current, nodeId));
           },
           onHoverWheelStart: (nodeId: string) => {
             handleAssistantHoverStart(nodeId);
@@ -662,48 +684,73 @@ export default function App() {
   );
 
   return (
-    <div className={`relative h-full w-full overflow-hidden ${fixedMode ? "fixed-layout-animated" : ""}`}>
-      <PreviousChatsSidebar
-        graphId={graphId}
-        chats={previousChats}
-        onSelect={(targetGraphId) => void selectChatFromHistory(targetGraphId)}
-        onRename={(chat) => void handleRenameChat(chat)}
-        onDelete={(chat) => void handleDeleteChat(chat)}
-        onDeleteAll={() => void handleDeleteAllChats()}
-      />
-
-      <AppHeader
-        title={title}
-        responseSource={responseSource}
-        apiKeyInput={apiKeyInput}
-        onApiKeyInputChange={setApiKeyInput}
-        onSaveApiKey={() => {
-          if (!apiKeyInput.trim()) return;
-          void setSessionApiKey(apiKeyInput.trim());
-          setApiKeyInput("");
-        }}
-        onNewChat={() => void startNewChat()}
-      />
+    <div className={`relative grid h-full w-full min-h-0 grid-rows-[auto_1fr_auto] overflow-hidden md:grid-cols-[16rem_1fr] ${fixedMode ? "fixed-layout-animated" : ""}`}>
+      <div className="row-start-1 md:col-span-2">
+        <AppHeader
+          title={title}
+          responseSource={responseSource}
+          apiKeyInput={apiKeyInput}
+          onApiKeyInputChange={setApiKeyInput}
+          onSaveApiKey={() => {
+            if (!apiKeyInput.trim()) return;
+            void setSessionApiKey(apiKeyInput.trim());
+            setApiKeyInput("");
+          }}
+          onNewChat={() => void startNewChat()}
+          onToggleHistory={() => setMobileHistoryOpen(true)}
+        />
+      </div>
 
       {wheelHoverNodeId && (
-        <div className="pointer-events-none absolute left-1/2 top-14 z-[1100] w-72 -translate-x-1/2 rounded-lg border border-stone-300 bg-paper/95 px-3 py-2 shadow-float backdrop-blur">
+        <div className="pointer-events-none absolute left-1/2 top-16 z-[1100] w-72 -translate-x-1/2 rounded-lg border border-stone-300 bg-paper/95 px-3 py-2 shadow-float backdrop-blur md:top-14">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-700">
-            {wheelHoverActive
-              ? "Wheel Mode Active"
-              : `Hold To Enable Wheel Mode (${(assistantWheelHoldMs / 1000).toFixed(1)}s)`}
+            Wheel Mode Active
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-200">
             <div
               className={`h-full rounded-full ${
                 wheelHoverActive ? "bg-accent" : "bg-stone-500"
               }`}
-              style={{ width: `${wheelHoverProgress * 100}%` }}
+              style={{ width: "100%" }}
             />
           </div>
         </div>
       )}
 
-      <main ref={mainRef} className="h-full pl-64 pt-12">
+      <aside className="hidden min-h-0 md:col-start-1 md:row-start-2 md:row-end-4 md:block">
+        <PreviousChatsSidebar
+          graphId={graphId}
+          chats={previousChats}
+          onSelect={(targetGraphId) => void selectChatFromHistory(targetGraphId)}
+          onRename={(chat) => void handleRenameChat(chat)}
+          onDelete={(chat) => void handleDeleteChat(chat)}
+          onDeleteAll={() => void handleDeleteAllChats()}
+        />
+      </aside>
+
+      {mobileHistoryOpen && (
+        <div className="absolute inset-0 z-[1200] md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/30"
+            aria-label="Close chat history"
+            onClick={() => setMobileHistoryOpen(false)}
+          />
+          <div className="absolute inset-y-0 left-0 w-[85vw] max-w-[20rem]">
+            <PreviousChatsSidebar
+              graphId={graphId}
+              chats={previousChats}
+              onSelect={(targetGraphId) => void selectChatFromHistory(targetGraphId)}
+              onRename={(chat) => void handleRenameChat(chat)}
+              onDelete={(chat) => void handleDeleteChat(chat)}
+              onDeleteAll={() => void handleDeleteAllChats()}
+              onClose={() => setMobileHistoryOpen(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      <main ref={mainRef} className="relative min-h-0 row-start-2 md:col-start-2 md:row-start-2">
         {fixedMode && layoutPanelOpen && (
           <div
             className="absolute z-[1000] w-64 rounded-lg border border-stone-300 bg-paper/95 p-2 backdrop-blur pointer-events-auto"
@@ -757,16 +804,16 @@ export default function App() {
               />
             </label>
             <label className="mb-2 block text-[11px] text-stone-700">
-              Wheel hold (s): <span className="font-semibold">{(assistantWheelHoldMs / 1000).toFixed(1)}</span>
+              Fit padding: <span className="font-semibold">{fitViewPadding.toFixed(2)}</span>
               <input
                 className="mt-1 w-full"
                 type="range"
-                min={100}
-                max={5000}
-                step={100}
-                value={assistantWheelHoldMs}
-                onChange={(event) => setAssistantWheelHoldMs(Number(event.target.value))}
-                onDoubleClick={() => setAssistantWheelHoldMs(DEFAULT_ASSISTANT_WHEEL_HOLD_MS)}
+                min={0}
+                max={1.2}
+                step={0.02}
+                value={fitViewPadding}
+                onChange={(event) => setFitViewPadding(Number(event.target.value))}
+                onDoubleClick={() => setFitViewPadding(DEFAULT_FIT_VIEW_BUTTON_PADDING)}
                 title="Double-click to reset"
               />
             </label>
@@ -809,106 +856,133 @@ export default function App() {
             </div>
           </div>
         )}
-
-        <ReactFlow
-          nodes={uiNodes}
-          edges={uiEdges}
-          nodeOrigin={[0.5, 0]}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={(_, node) => setSelectedNode(node.id)}
-          onNodeDoubleClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onPaneClick={() => setSelectedNode(null)}
-          onInit={setReactFlowInstance}
-          nodeTypes={nodeTypes}
-          fitView
-          fitViewOptions={FIT_VIEW_OPTIONS}
-          minZoom={MIN_ZOOM}
-          maxZoom={MAX_ZOOM}
-          nodesDraggable={!fixedMode}
-          panOnDrag
-          zoomOnScroll={!wheelHoverActive}
-          zoomOnDoubleClick={!fixedMode}
-        >
-          <Background color="#d6d0c5" gap={18} />
-          <MiniMap position="top-right" />
-          <Controls
-            position="top-left"
+        <div className="h-full w-full border-4 border-red-600">
+          <ReactFlow
+            nodes={uiNodes}
+            edges={uiEdges}
+          nodeOrigin={[NODE_ORIGIN_X, NODE_ORIGIN_Y]}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={(_, node) => setSelectedNode(node.id)}
+            onNodeDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onPaneClick={() => setSelectedNode(null)}
+            onInit={setReactFlowInstance}
+            nodeTypes={nodeTypes}
+            fitView
             fitViewOptions={FIT_VIEW_OPTIONS}
-            showInteractive={false}
-            showFitView={false}
-            showZoom={false}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+            nodesDraggable={!fixedMode}
+            panOnDrag
+            zoomOnScroll={!wheelHoverActive}
+            zoomOnDoubleClick={!fixedMode}
           >
-            <ControlButton
+            <Background color="#d6d0c5" gap={18} />
+            <MiniMap position="top-right" />
+            <Controls
+              position="top-left"
+              fitViewOptions={FIT_VIEW_OPTIONS}
+              showInteractive={false}
+              showFitView={false}
+              showZoom={false}
+            >
+              <ControlButton
               onClick={() => {
-                if (!reactFlowInstance) return;
+                if (!reactFlowInstance || !mainRef.current) return;
                 const viewport = reactFlowInstance.getViewport();
-                const nextZoom = Math.min(MAX_ZOOM, viewport.zoom * ZOOM_BUTTON_FACTOR);
-                void reactFlowInstance.setViewport({ ...viewport, zoom: nextZoom }, { duration: 220 });
-              }}
-              title="Zoom in"
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M10 5v10M5 10h10" strokeLinecap="round" />
-              </svg>
-            </ControlButton>
-            <ControlButton
+                const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
+                const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
+                const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
+                const contextPanelWidth =
+                  panelOpen && window.matchMedia("(min-width: 640px)").matches ? CONTEXT_PANEL_WIDTH : 0;
+                const visibleWidth = Math.max(120, baseWidth - contextPanelWidth);
+                const visibleHeight = Math.max(120, baseHeight);
+                const centerX = visibleWidth / 2;
+                const centerY = visibleHeight / 2;
+                const flowCenterX = (centerX - viewport.x) / viewport.zoom;
+                  const flowCenterY = (centerY - viewport.y) / viewport.zoom;
+                  const nextZoom = Math.min(MAX_ZOOM, viewport.zoom * ZOOM_BUTTON_FACTOR);
+                  const nextX = centerX - flowCenterX * nextZoom;
+                  const nextY = centerY - flowCenterY * nextZoom;
+                  void reactFlowInstance.setViewport({ x: nextX, y: nextY, zoom: nextZoom }, { duration: 220 });
+                }}
+                title="Zoom in"
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M10 5v10M5 10h10" strokeLinecap="round" />
+                </svg>
+              </ControlButton>
+              <ControlButton
               onClick={() => {
-                if (!reactFlowInstance) return;
+                if (!reactFlowInstance || !mainRef.current) return;
                 const viewport = reactFlowInstance.getViewport();
-                const nextZoom = Math.max(MIN_ZOOM, viewport.zoom / ZOOM_BUTTON_FACTOR);
-                void reactFlowInstance.setViewport({ ...viewport, zoom: nextZoom }, { duration: 220 });
-              }}
-              title="Zoom out"
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M5 10h10" strokeLinecap="round" />
-              </svg>
-            </ControlButton>
-            <ControlButton onClick={fitCanvasToGraph} title="Fit view">
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </ControlButton>
-            <ControlButton
-              onClick={() => setLayoutPanelOpen((value) => !value)}
-              title={fixedMode ? "Toggle layout sliders" : "Layout sliders are available in fixed mode"}
-              disabled={!fixedMode}
-              className={`${!fixedMode ? "opacity-40 cursor-not-allowed" : ""} ${
-                fixedMode && layoutPanelOpen ? "!bg-accent/15 !text-accent" : ""
-              }`}
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M4 5h12M4 10h12M4 15h12" strokeLinecap="round" />
-                <circle cx="8" cy="5" r="1.7" />
-                <circle cx="12.5" cy="10" r="1.7" />
-                <circle cx="6.5" cy="15" r="1.7" />
-              </svg>
-            </ControlButton>
-            <ControlButton
-              onClick={toggleLayoutMode}
-              title={fixedMode ? "Switch to Free Layout" : "Switch to Fixed Layout"}
-              className={fixedMode ? "!bg-accent/15 !text-accent" : ""}
-            >
-              {fixedMode ? (
+                const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
+                const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
+                const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
+                const contextPanelWidth =
+                  panelOpen && window.matchMedia("(min-width: 640px)").matches ? CONTEXT_PANEL_WIDTH : 0;
+                const visibleWidth = Math.max(120, baseWidth - contextPanelWidth);
+                const visibleHeight = Math.max(120, baseHeight);
+                const centerX = visibleWidth / 2;
+                const centerY = visibleHeight / 2;
+                const flowCenterX = (centerX - viewport.x) / viewport.zoom;
+                  const flowCenterY = (centerY - viewport.y) / viewport.zoom;
+                  const nextZoom = Math.max(MIN_ZOOM, viewport.zoom / ZOOM_BUTTON_FACTOR);
+                  const nextX = centerX - flowCenterX * nextZoom;
+                  const nextY = centerY - flowCenterY * nextZoom;
+                  void reactFlowInstance.setViewport({ x: nextX, y: nextY, zoom: nextZoom }, { duration: 220 });
+                }}
+                title="Zoom out"
+              >
                 <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />
-                  <rect x="5" y="9" width="10" height="7" rx="1.2" />
+                  <path d="M5 10h10" strokeLinecap="round" />
                 </svg>
-              ) : (
+              </ControlButton>
+              <ControlButton onClick={fitCanvasToGraph} title="Fit view">
                 <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />
-                  <rect x="5" y="9" width="10" height="7" rx="1.2" />
-                  <path d="M12.8 4.2l3.2 3.2" strokeLinecap="round" />
+                  <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-              )}
-            </ControlButton>
-          </Controls>
-        </ReactFlow>
+              </ControlButton>
+              <ControlButton
+                onClick={() => setLayoutPanelOpen((value) => !value)}
+                title={fixedMode ? "Toggle layout sliders" : "Layout sliders are available in fixed mode"}
+                disabled={!fixedMode}
+                className={`${!fixedMode ? "opacity-40 cursor-not-allowed" : ""} ${
+                  fixedMode && layoutPanelOpen ? "!bg-accent/15 !text-accent" : ""
+                }`}
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M4 5h12M4 10h12M4 15h12" strokeLinecap="round" />
+                  <circle cx="8" cy="5" r="1.7" />
+                  <circle cx="12.5" cy="10" r="1.7" />
+                  <circle cx="6.5" cy="15" r="1.7" />
+                </svg>
+              </ControlButton>
+              <ControlButton
+                onClick={toggleLayoutMode}
+                title={fixedMode ? "Switch to Free Layout" : "Switch to Fixed Layout"}
+                className={fixedMode ? "!bg-accent/15 !text-accent" : ""}
+              >
+                {fixedMode ? (
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />
+                    <rect x="5" y="9" width="10" height="7" rx="1.2" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />
+                    <rect x="5" y="9" width="10" height="7" rx="1.2" />
+                    <path d="M12.8 4.2l3.2 3.2" strokeLinecap="round" />
+                  </svg>
+                )}
+              </ControlButton>
+            </Controls>
+          </ReactFlow>
+        </div>
       </main>
 
       <ElaborateButton
@@ -928,14 +1002,16 @@ export default function App() {
         onSend={() => void sendPanelContinue()}
       />
 
-      <ComposerBar
+      <div className="row-start-3 md:col-start-2 md:row-start-3">
+        <ComposerBar
         selectedNodeId={selectedNodeId}
         composerText={composerText}
         loading={loading}
         inputRef={composerInputRef}
         onComposerTextChange={setComposerText}
         onSend={() => void sendContinue("normal")}
-      />
+        />
+      </div>
 
       {loading && <div className="pointer-events-none absolute inset-0 z-10 bg-white/20" />}
       {error && <div className="absolute bottom-14 left-3 z-30 rounded bg-red-100 px-3 py-2 text-xs text-red-800">{error}</div>}

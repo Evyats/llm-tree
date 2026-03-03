@@ -18,7 +18,7 @@ export default function ComposerBar({
   onSend,
 }: ComposerBarProps) {
   return (
-    <footer className="absolute bottom-0 left-0 z-20 flex w-full items-center gap-2 border-t border-stone-300 bg-paper/90 px-3 py-2 pl-[16.6rem] backdrop-blur">
+    <footer className="z-20 flex items-center gap-2 border-t border-stone-300 bg-paper/90 px-2 py-2 backdrop-blur md:px-3">
       <div className="rounded bg-stone-100 px-2 py-1 text-xs">selected: {selectedNodeId ?? "none"}</div>
       <input
         ref={inputRef}

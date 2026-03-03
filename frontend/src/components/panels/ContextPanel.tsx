@@ -25,7 +25,7 @@ export default function ContextPanel({
   }
 
   return (
-    <aside className="absolute right-0 top-12 z-20 h-[calc(100%-6.5rem)] w-[420px] border-l border-stone-300 bg-paper/95 p-3 backdrop-blur">
+    <aside className="absolute inset-y-0 right-0 z-20 h-full w-full border-l border-stone-300 bg-paper/95 p-3 backdrop-blur sm:w-[420px]">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold">Context Chat</h2>
         <button

@@ -7,6 +7,7 @@ interface PreviousChatsSidebarProps {
   onRename: (chat: ChatSummary) => void;
   onDelete: (chat: ChatSummary) => void;
   onDeleteAll: () => void;
+  onClose?: () => void;
 }
 
 export default function PreviousChatsSidebar({
@@ -16,18 +17,34 @@ export default function PreviousChatsSidebar({
   onRename,
   onDelete,
   onDeleteAll,
+  onClose,
 }: PreviousChatsSidebarProps) {
   return (
-    <aside className="absolute bottom-12 left-0 top-12 z-30 flex w-64 flex-col border-r border-stone-300 bg-paper/92 p-2 backdrop-blur">
+    <aside className="flex h-full min-h-0 w-full flex-col border-r border-stone-300 bg-paper/92 p-2 backdrop-blur">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="text-xs font-semibold uppercase tracking-wide text-stone-600">Previous Chats</div>
-        <button
-          className="rounded bg-red-100 px-2 py-1 text-[10px] font-medium text-red-700 hover:bg-red-200"
-          onClick={onDeleteAll}
-          type="button"
-        >
-          Remove All
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            className="rounded bg-red-100 px-2 py-1 text-[10px] font-medium text-red-700 hover:bg-red-200"
+            onClick={onDeleteAll}
+            type="button"
+          >
+            Remove All
+          </button>
+          {onClose && (
+            <button
+              className="rounded bg-stone-200 p-1 text-stone-700 hover:bg-stone-300"
+              onClick={onClose}
+              type="button"
+              aria-label="Close chat history"
+              title="Close"
+            >
+              <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M5 5L15 15M15 5L5 15" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {chats.length === 0 ? (
