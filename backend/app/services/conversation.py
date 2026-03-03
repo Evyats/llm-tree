@@ -82,8 +82,10 @@ def continue_conversation(
     transcript = transcript_from_path(context_path)
 
     stored_user_text = user_text
+    model_user_text = user_text
     if mode == "elaboration" and highlighted_text:
         stored_user_text = f"{highlighted_text}?"
+        model_user_text = stored_user_text
 
     ux, uy = next_user_position(db, graph_id, continue_from_node_id)
     user_node = Node(
@@ -101,7 +103,7 @@ def continue_conversation(
 
     variants, source = generate_variants(
         transcript=transcript,
-        user_text=user_text,
+        user_text=model_user_text,
         mode=mode,
         highlighted_text=highlighted_text,
         runtime_api_key=runtime_api_key,
@@ -153,6 +155,6 @@ def continue_conversation(
         [to_edge_payload(e) for e in edges],
         source,
         transcript
-        + [{"role": "user", "content": user_text}]
+        + [{"role": "user", "content": model_user_text}]
         + [{"role": "assistant", "content": node_display_text(assistant_node)}],
     )

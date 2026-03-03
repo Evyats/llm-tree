@@ -45,6 +45,7 @@ import {
 } from "./features/layout/constants";
 import { buildFixedPositions } from "./features/layout/layoutEngine";
 import { useGraphStore, type NodeData } from "./store/useGraphStore";
+import type { GraphNodePayload } from "./types/graph";
 
 interface ElaborateAction {
   nodeId: string;
@@ -57,13 +58,22 @@ const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 2.5;
 const CONTEXT_PANEL_WIDTH = 420;
 const DEFAULT_FIT_VIEW_BUTTON_PADDING = 0.05;
-const ZOOM_BUTTON_FACTOR = 1.4;
+const ZOOM_BUTTON_FACTOR = 1.75;
+const DEFAULT_ASSISTANT_WHEEL_HOLD_MS = 0;
 const ASSISTANT_WHEEL_STEP_COOLDOWN_MS = 140;
-const DEFAULT_EDGE_STYLE = "default";
-const EDGE_STYLE_OPTIONS = [
+const EDGE_TYPE_OPTIONS = [
   { value: "default", label: "Bezier" },
   { value: "straight", label: "Straight" },
   { value: "step", label: "Step" },
+] as const;
+const EDGE_MOTION_OPTIONS = [
+  { value: "static", label: "Static" },
+  { value: "animated", label: "Animated" },
+] as const;
+const EDGE_LINE_STYLE_OPTIONS = [
+  { value: "solid", label: "Solid" },
+  { value: "dashed", label: "Dashed" },
+  { value: "dotted", label: "Dotted" },
 ] as const;
 const NODE_ORIGIN_X = 0.5;
 const NODE_ORIGIN_Y = 0;
@@ -88,6 +98,18 @@ function getExactCenteredViewport(
     y: viewportHeight / 2 - centerY * zoom,
     zoom,
   };
+}
+
+function buildTranscriptFromPayloadNodes(nodes: GraphNodePayload[], targetNodeId: string) {
+  const index = new Map(nodes.map((node) => [node.id, node]));
+  const chain: GraphNodePayload[] = [];
+  let current = index.get(targetNodeId) ?? null;
+  while (current) {
+    chain.push(current);
+    current = current.parent_id ? index.get(current.parent_id) ?? null : null;
+  }
+  chain.reverse();
+  return chain.map((node) => ({ role: node.role, content: node.text }));
 }
 
 export default function App() {
@@ -125,18 +147,31 @@ export default function App() {
   const [rowGap, setRowGap] = useState(FIXED_ROW_GAP);
   const [treeGap, setTreeGap] = useState(FIXED_TREE_GAP);
   const [siblingGap, setSiblingGap] = useState(FIXED_MIN_COL_GAP);
-  const [edgeStyleIndex, setEdgeStyleIndex] = useState(0);
+  const [assistantWheelHoldMs, setAssistantWheelHoldMs] = useState(DEFAULT_ASSISTANT_WHEEL_HOLD_MS);
+  const [userEdgeType, setUserEdgeType] = useState<(typeof EDGE_TYPE_OPTIONS)[number]["value"]>("default");
+  const [assistantEdgeType, setAssistantEdgeType] = useState<(typeof EDGE_TYPE_OPTIONS)[number]["value"]>("default");
+  const [userEdgeMotion, setUserEdgeMotion] = useState<(typeof EDGE_MOTION_OPTIONS)[number]["value"]>("static");
+  const [assistantEdgeMotion, setAssistantEdgeMotion] = useState<(typeof EDGE_MOTION_OPTIONS)[number]["value"]>("static");
+  const [userEdgeLineStyle, setUserEdgeLineStyle] = useState<(typeof EDGE_LINE_STYLE_OPTIONS)[number]["value"]>("solid");
+  const [assistantEdgeLineStyle, setAssistantEdgeLineStyle] =
+    useState<(typeof EDGE_LINE_STYLE_OPTIONS)[number]["value"]>("solid");
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
+  const [panelAnchorNodeId, setPanelAnchorNodeId] = useState<string | null>(null);
+  const [showFullSelectedNodeId, setShowFullSelectedNodeId] = useState(false);
   const [wheelHoverNodeId, setWheelHoverNodeId] = useState<string | null>(null);
+  const [wheelHoverProgress, setWheelHoverProgress] = useState(0);
   const [wheelHoverActive, setWheelHoverActive] = useState(false);
   const composerInputRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
 
   const manualPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodesRef = useRef(nodes);
+  const wheelHoverStartRef = useRef<number>(0);
+  const wheelHoverRafRef = useRef<number | null>(null);
   const wheelLastStepAtRef = useRef(0);
+  const suppressPaneClearUntilRef = useRef(0);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -210,9 +245,7 @@ export default function App() {
         const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
         const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
         const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
-        const contextPanelWidth =
-          panelOpen && window.matchMedia("(min-width: 640px)").matches ? CONTEXT_PANEL_WIDTH : 0;
-        const visibleWidth = Math.max(120, baseWidth - contextPanelWidth);
+        const visibleWidth = Math.max(120, baseWidth);
         const visibleHeight = Math.max(120, baseHeight);
         const viewport = getExactCenteredViewport(
           bounds,
@@ -329,18 +362,44 @@ export default function App() {
   );
 
   const clearAssistantWheelHover = useCallback(() => {
+    if (wheelHoverRafRef.current !== null) {
+      cancelAnimationFrame(wheelHoverRafRef.current);
+      wheelHoverRafRef.current = null;
+    }
     setWheelHoverNodeId(null);
+    setWheelHoverProgress(0);
     setWheelHoverActive(false);
+    wheelHoverStartRef.current = 0;
     wheelLastStepAtRef.current = 0;
   }, []);
 
   const handleAssistantHoverStart = useCallback(
     (nodeId: string) => {
       setWheelHoverNodeId(nodeId);
-      setWheelHoverActive(true);
+      if (assistantWheelHoldMs <= 0) {
+        setWheelHoverProgress(1);
+        setWheelHoverActive(true);
+        wheelLastStepAtRef.current = 0;
+        return;
+      }
+      setWheelHoverProgress(0);
+      setWheelHoverActive(false);
+      wheelHoverStartRef.current = performance.now();
       wheelLastStepAtRef.current = 0;
+      const tick = () => {
+        const elapsed = performance.now() - wheelHoverStartRef.current;
+        const progress = Math.max(0, Math.min(1, elapsed / assistantWheelHoldMs));
+        setWheelHoverProgress(progress);
+        if (progress >= 1) {
+          setWheelHoverActive(true);
+          wheelHoverRafRef.current = null;
+          return;
+        }
+        wheelHoverRafRef.current = requestAnimationFrame(tick);
+      };
+      wheelHoverRafRef.current = requestAnimationFrame(tick);
     },
-    []
+    [assistantWheelHoldMs]
   );
 
   const handleAssistantHoverEnd = useCallback(
@@ -407,14 +466,14 @@ export default function App() {
   );
 
   const sendPanelContinue = useCallback(async () => {
-    if (!graphId || !selectedNodeId || !panelText.trim()) return;
+    if (!graphId || !panelAnchorNodeId || !panelText.trim()) return;
     setLoading(true);
     setError(null);
     try {
       const response = await continueInPanel({
         graph_id: graphId,
-        anchor_node_id: selectedNodeId,
-        anchor_variant_index: getContinueFromVariantIndex(nodesById, selectedNodeId),
+        anchor_node_id: panelAnchorNodeId,
+        anchor_variant_index: getContinueFromVariantIndex(nodesById, panelAnchorNodeId),
         user_text: panelText.trim(),
       });
       appendEntities([response.created_user_node, response.created_assistant_node], response.created_edges);
@@ -428,7 +487,42 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [appendEntities, graphId, nodesById, panelText, refreshGraphList, selectedNodeId, setResponseSource, setSelectedNode, setTranscript]);
+  }, [
+    appendEntities,
+    graphId,
+    nodesById,
+    panelAnchorNodeId,
+    panelText,
+    refreshGraphList,
+    setResponseSource,
+    setSelectedNode,
+    setTranscript,
+  ]);
+
+  const openContextPanelForNode = useCallback(
+    async (nodeId: string) => {
+      suppressPaneClearUntilRef.current = performance.now() + 320;
+      setPanelAnchorNodeId(nodeId);
+      setSelectedNode(nodeId);
+      setPanelOpen(true);
+      const localTranscript = buildTranscriptUntilNode(nodes, nodeId);
+      if (localTranscript.length > 0) {
+        setTranscript(localTranscript);
+        return;
+      }
+      if (!graphId) {
+        setTranscript([]);
+        return;
+      }
+      try {
+        const graph = await getGraph(graphId);
+        setTranscript(buildTranscriptFromPayloadNodes(graph.nodes, nodeId));
+      } catch {
+        setTranscript([]);
+      }
+    },
+    [graphId, nodes, setPanelOpen, setSelectedNode, setTranscript]
+  );
 
   const loadGraph = useCallback(
     async (targetGraphId: string) => {
@@ -438,6 +532,7 @@ export default function App() {
       fitCanvasToGraph();
       setMobileHistoryOpen(false);
       setPanelOpen(false);
+      setPanelAnchorNodeId(null);
       setError(null);
     },
     [fitCanvasToGraph, setGraph, setPanelOpen]
@@ -455,6 +550,7 @@ export default function App() {
       setComposerText("");
       setPanelText("");
       setPanelOpen(false);
+      setPanelAnchorNodeId(null);
       setElaborateAction(null);
       setResponseSource(null);
       setTranscript([]);
@@ -470,6 +566,7 @@ export default function App() {
     async (targetGraphId: string) => {
       if (targetGraphId === graphId) {
         setPanelOpen(false);
+        setPanelAnchorNodeId(null);
         return;
       }
       try {
@@ -618,11 +715,11 @@ export default function App() {
   }, [assistantWithBranch, clearAssistantWheelHover, nodesById, wheelHoverNodeId]);
 
   useEffect(() => {
-    if (!panelOpen || !selectedNodeId) return;
-    const synced = buildTranscriptUntilNode(nodesRef.current, selectedNodeId);
+    if (!panelOpen || !panelAnchorNodeId) return;
+    const synced = buildTranscriptUntilNode(nodesRef.current, panelAnchorNodeId);
     if (synced.length === 0) return;
     setTranscript(synced);
-  }, [panelOpen, selectedNodeId, setTranscript, nodes]);
+  }, [panelAnchorNodeId, panelOpen, setTranscript, nodes]);
 
   const uiNodes: Node<NodeData>[] = useMemo(
     () =>
@@ -639,9 +736,7 @@ export default function App() {
             setElaborateAction({ nodeId, text, x, y });
           },
           onOpenPanel: (nodeId: string) => {
-            setSelectedNode(nodeId);
-            setPanelOpen(true);
-            setTranscript(buildTranscriptUntilNode(nodesRef.current, nodeId));
+            void openContextPanelForNode(nodeId);
           },
           onHoverWheelStart: (nodeId: string) => {
             handleAssistantHoverStart(nodeId);
@@ -671,21 +766,53 @@ export default function App() {
       setSelectedNode,
       setTranscript,
       structure,
+      openContextPanelForNode,
     ]
   );
 
-  const uiEdges: Edge[] = useMemo(
-    () =>
-      edges.map((edge) => ({
+  const uiEdges: Edge[] = useMemo(() => {
+    const dashArrayFor = (style: (typeof EDGE_LINE_STYLE_OPTIONS)[number]["value"]) => {
+      if (style === "dashed") return "8 6";
+      if (style === "dotted") return "2 6";
+      return undefined;
+    };
+    return edges.map((edge) => {
+      const sourceRole = nodesById.get(edge.source)?.data.role ?? "assistant";
+      const roleConfig =
+        sourceRole === "user"
+          ? { type: userEdgeType, motion: userEdgeMotion, lineStyle: userEdgeLineStyle }
+          : { type: assistantEdgeType, motion: assistantEdgeMotion, lineStyle: assistantEdgeLineStyle };
+      return {
         ...edge,
-        type: fixedMode ? EDGE_STYLE_OPTIONS[edgeStyleIndex]?.value ?? DEFAULT_EDGE_STYLE : DEFAULT_EDGE_STYLE,
-      })),
-    [edgeStyleIndex, edges, fixedMode]
-  );
+        type: roleConfig.type,
+        animated: roleConfig.motion === "animated",
+        style: {
+          ...(edge.style ?? {}),
+          strokeWidth: 2,
+          strokeDasharray: dashArrayFor(roleConfig.lineStyle),
+        },
+      } as Edge;
+    });
+  }, [
+    edges,
+    nodesById,
+    userEdgeType,
+    userEdgeMotion,
+    userEdgeLineStyle,
+    assistantEdgeType,
+    assistantEdgeMotion,
+    assistantEdgeLineStyle,
+  ]);
+
+  const desktopGridCols = panelOpen ? "md:grid-cols-[16rem_minmax(0,1fr)_420px]" : "md:grid-cols-[16rem_minmax(0,1fr)]";
 
   return (
-    <div className={`relative grid h-full w-full min-h-0 grid-rows-[auto_1fr_auto] overflow-hidden md:grid-cols-[16rem_1fr] ${fixedMode ? "fixed-layout-animated" : ""}`}>
-      <div className="row-start-1 md:col-span-2">
+    <div
+      className={`relative grid h-full w-full min-h-0 grid-rows-[auto_1fr_auto] overflow-hidden ${desktopGridCols} ${
+        fixedMode ? "fixed-layout-animated" : ""
+      }`}
+    >
+      <div className="row-start-1 col-span-full">
         <AppHeader
           title={title}
           responseSource={responseSource}
@@ -700,22 +827,6 @@ export default function App() {
           onToggleHistory={() => setMobileHistoryOpen(true)}
         />
       </div>
-
-      {wheelHoverNodeId && (
-        <div className="pointer-events-none absolute left-1/2 top-16 z-[1100] w-72 -translate-x-1/2 rounded-lg border border-stone-300 bg-paper/95 px-3 py-2 shadow-float backdrop-blur md:top-14">
-          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-700">
-            Wheel Mode Active
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-200">
-            <div
-              className={`h-full rounded-full ${
-                wheelHoverActive ? "bg-accent" : "bg-stone-500"
-              }`}
-              style={{ width: "100%" }}
-            />
-          </div>
-        </div>
-      )}
 
       <aside className="hidden min-h-0 md:col-start-1 md:row-start-2 md:row-end-4 md:block">
         <PreviousChatsSidebar
@@ -753,7 +864,7 @@ export default function App() {
       <main ref={mainRef} className="relative min-h-0 row-start-2 md:col-start-2 md:row-start-2">
         {fixedMode && layoutPanelOpen && (
           <div
-            className="absolute z-[1000] w-64 rounded-lg border border-stone-300 bg-paper/95 p-2 backdrop-blur pointer-events-auto"
+            className="absolute z-[1000] w-[36rem] max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-lg border border-stone-300 bg-paper/95 p-2 backdrop-blur pointer-events-auto"
             style={{ left: layoutPanelPosition.left, top: layoutPanelPosition.top }}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
@@ -775,88 +886,200 @@ export default function App() {
               </button>
             </div>
             <div className="mb-2 text-[10px] text-stone-500">Double-click any slider to reset to default.</div>
-            <label className="mb-2 block text-[11px] text-stone-700">
-              Row gap: <span className="font-semibold">{rowGap}</span>
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min={0}
-                max={120}
-                step={1}
-                value={rowGap}
-                onChange={(event) => setRowGap(Number(event.target.value))}
-                onDoubleClick={() => setRowGap(FIXED_ROW_GAP)}
-                title="Double-click to reset"
-              />
-            </label>
-            <label className="mb-2 block text-[11px] text-stone-700">
-              Sibling gap: <span className="font-semibold">{siblingGap}</span>
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min={0}
-                max={160}
-                step={1}
-                value={siblingGap}
-                onChange={(event) => setSiblingGap(Number(event.target.value))}
-                onDoubleClick={() => setSiblingGap(FIXED_MIN_COL_GAP)}
-                title="Double-click to reset"
-              />
-            </label>
-            <label className="mb-2 block text-[11px] text-stone-700">
-              Fit padding: <span className="font-semibold">{fitViewPadding.toFixed(2)}</span>
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min={0}
-                max={1.2}
-                step={0.02}
-                value={fitViewPadding}
-                onChange={(event) => setFitViewPadding(Number(event.target.value))}
-                onDoubleClick={() => setFitViewPadding(DEFAULT_FIT_VIEW_BUTTON_PADDING)}
-                title="Double-click to reset"
-              />
-            </label>
-            <label className="block text-[11px] text-stone-700">
-              Tree gap: <span className="font-semibold">{treeGap}</span>
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min={20}
-                max={420}
-                step={2}
-                value={treeGap}
-                onChange={(event) => setTreeGap(Number(event.target.value))}
-                onDoubleClick={() => setTreeGap(FIXED_TREE_GAP)}
-                title="Double-click to reset"
-              />
-            </label>
-            <div className="mt-2 text-[11px] text-stone-700">
-              <div className="mb-1">
-                Edge style: <span className="font-semibold">{EDGE_STYLE_OPTIONS[edgeStyleIndex]?.label}</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <label className="block text-[11px] text-stone-700">
+                  Row gap: <span className="font-semibold">{rowGap}</span>
+                  <input
+                    className="mt-1 w-full"
+                    type="range"
+                    min={0}
+                    max={120}
+                    step={1}
+                    value={rowGap}
+                    onChange={(event) => setRowGap(Number(event.target.value))}
+                    onDoubleClick={() => setRowGap(FIXED_ROW_GAP)}
+                    title="Double-click to reset"
+                  />
+                </label>
+                <label className="block text-[11px] text-stone-700">
+                  Sibling gap: <span className="font-semibold">{siblingGap}</span>
+                  <input
+                    className="mt-1 w-full"
+                    type="range"
+                    min={0}
+                    max={160}
+                    step={1}
+                    value={siblingGap}
+                    onChange={(event) => setSiblingGap(Number(event.target.value))}
+                    onDoubleClick={() => setSiblingGap(FIXED_MIN_COL_GAP)}
+                    title="Double-click to reset"
+                  />
+                </label>
+                <label className="block text-[11px] text-stone-700">
+                  Fit padding: <span className="font-semibold">{fitViewPadding.toFixed(2)}</span>
+                  <input
+                    className="mt-1 w-full"
+                    type="range"
+                    min={0}
+                    max={1.2}
+                    step={0.02}
+                    value={fitViewPadding}
+                    onChange={(event) => setFitViewPadding(Number(event.target.value))}
+                    onDoubleClick={() => setFitViewPadding(DEFAULT_FIT_VIEW_BUTTON_PADDING)}
+                    title="Double-click to reset"
+                  />
+                </label>
+                <label className="block text-[11px] text-stone-700">
+                  Wheel hold (s): <span className="font-semibold">{(assistantWheelHoldMs / 1000).toFixed(1)}</span>
+                  <input
+                    className="mt-1 w-full"
+                    type="range"
+                    min={0}
+                    max={5000}
+                    step={100}
+                    value={assistantWheelHoldMs}
+                    onChange={(event) => setAssistantWheelHoldMs(Number(event.target.value))}
+                    onDoubleClick={() => setAssistantWheelHoldMs(DEFAULT_ASSISTANT_WHEEL_HOLD_MS)}
+                    title="Double-click to reset"
+                  />
+                </label>
+                <label className="block text-[11px] text-stone-700">
+                  Tree gap: <span className="font-semibold">{treeGap}</span>
+                  <input
+                    className="mt-1 w-full"
+                    type="range"
+                    min={20}
+                    max={420}
+                    step={2}
+                    value={treeGap}
+                    onChange={(event) => setTreeGap(Number(event.target.value))}
+                    onDoubleClick={() => setTreeGap(FIXED_TREE_GAP)}
+                    title="Double-click to reset"
+                  />
+                </label>
               </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {EDGE_STYLE_OPTIONS.map((option, index) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`rounded px-2 py-1 ${
-                      edgeStyleIndex === index
-                        ? "bg-accent/20 text-accent border border-accent/40"
-                        : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
-                    }`}
-                    onClick={() => setEdgeStyleIndex(index)}
-                    aria-label={`Set edge style to ${option.label}`}
-                    title={option.label}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <div className="space-y-3 text-[11px] text-stone-700">
+              <div>
+                <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">User Outgoing Arrows</div>
+                <div className="mb-1 text-[10px] text-stone-500">Type</div>
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {EDGE_TYPE_OPTIONS.map((option) => (
+                    <button
+                      key={`user-type-${option.value}`}
+                      type="button"
+                      className={`rounded px-2 py-1 ${
+                        userEdgeType === option.value
+                          ? "bg-accent/20 text-accent border border-accent/40"
+                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                      }`}
+                      onClick={() => setUserEdgeType(option.value)}
+                      title={option.label}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mb-1 text-[10px] text-stone-500">Motion</div>
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {EDGE_MOTION_OPTIONS.map((option) => (
+                    <button
+                      key={`user-motion-${option.value}`}
+                      type="button"
+                      className={`rounded px-2 py-1 ${
+                        userEdgeMotion === option.value
+                          ? "bg-accent/20 text-accent border border-accent/40"
+                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                      }`}
+                      onClick={() => setUserEdgeMotion(option.value)}
+                      title={option.label}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mb-1 text-[10px] text-stone-500">Line Style</div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {EDGE_LINE_STYLE_OPTIONS.map((option) => (
+                    <button
+                      key={`user-line-${option.value}`}
+                      type="button"
+                      className={`rounded px-2 py-1 ${
+                        userEdgeLineStyle === option.value
+                          ? "bg-accent/20 text-accent border border-accent/40"
+                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                      }`}
+                      onClick={() => setUserEdgeLineStyle(option.value)}
+                      title={option.label}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              <div>
+                <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">Assistant Outgoing Arrows</div>
+                <div className="mb-1 text-[10px] text-stone-500">Type</div>
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {EDGE_TYPE_OPTIONS.map((option) => (
+                    <button
+                      key={`assistant-type-${option.value}`}
+                      type="button"
+                      className={`rounded px-2 py-1 ${
+                        assistantEdgeType === option.value
+                          ? "bg-accent/20 text-accent border border-accent/40"
+                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                      }`}
+                      onClick={() => setAssistantEdgeType(option.value)}
+                      title={option.label}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mb-1 text-[10px] text-stone-500">Motion</div>
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {EDGE_MOTION_OPTIONS.map((option) => (
+                    <button
+                      key={`assistant-motion-${option.value}`}
+                      type="button"
+                      className={`rounded px-2 py-1 ${
+                        assistantEdgeMotion === option.value
+                          ? "bg-accent/20 text-accent border border-accent/40"
+                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                      }`}
+                      onClick={() => setAssistantEdgeMotion(option.value)}
+                      title={option.label}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mb-1 text-[10px] text-stone-500">Line Style</div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {EDGE_LINE_STYLE_OPTIONS.map((option) => (
+                    <button
+                      key={`assistant-line-${option.value}`}
+                      type="button"
+                      className={`rounded px-2 py-1 ${
+                        assistantEdgeLineStyle === option.value
+                          ? "bg-accent/20 text-accent border border-accent/40"
+                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                      }`}
+                      onClick={() => setAssistantEdgeLineStyle(option.value)}
+                      title={option.label}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
             </div>
           </div>
         )}
-        <div className="h-full w-full border-4 border-red-600">
+        <div className="h-full w-full">
           <ReactFlow
             nodes={uiNodes}
             edges={uiEdges}
@@ -868,7 +1091,15 @@ export default function App() {
               event.preventDefault();
               event.stopPropagation();
             }}
-            onPaneClick={() => setSelectedNode(null)}
+            onPaneClick={() => {
+              if (panelOpen) {
+                return;
+              }
+              if (performance.now() < suppressPaneClearUntilRef.current) {
+                return;
+              }
+              setSelectedNode(null);
+            }}
             onInit={setReactFlowInstance}
             nodeTypes={nodeTypes}
             fitView
@@ -896,9 +1127,7 @@ export default function App() {
                 const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
                 const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
                 const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
-                const contextPanelWidth =
-                  panelOpen && window.matchMedia("(min-width: 640px)").matches ? CONTEXT_PANEL_WIDTH : 0;
-                const visibleWidth = Math.max(120, baseWidth - contextPanelWidth);
+                const visibleWidth = Math.max(120, baseWidth);
                 const visibleHeight = Math.max(120, baseHeight);
                 const centerX = visibleWidth / 2;
                 const centerY = visibleHeight / 2;
@@ -922,9 +1151,7 @@ export default function App() {
                 const flowViewportEl = mainRef.current.querySelector(".react-flow") as HTMLElement | null;
                 const baseWidth = flowViewportEl?.clientWidth ?? mainRef.current.clientWidth;
                 const baseHeight = flowViewportEl?.clientHeight ?? mainRef.current.clientHeight;
-                const contextPanelWidth =
-                  panelOpen && window.matchMedia("(min-width: 640px)").matches ? CONTEXT_PANEL_WIDTH : 0;
-                const visibleWidth = Math.max(120, baseWidth - contextPanelWidth);
+                const visibleWidth = Math.max(120, baseWidth);
                 const visibleHeight = Math.max(120, baseHeight);
                 const centerX = visibleWidth / 2;
                 const centerY = visibleHeight / 2;
@@ -967,47 +1194,92 @@ export default function App() {
                 title={fixedMode ? "Switch to Free Layout" : "Switch to Fixed Layout"}
                 className={fixedMode ? "!bg-accent/15 !text-accent" : ""}
               >
-                {fixedMode ? (
-                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />
-                    <rect x="5" y="9" width="10" height="7" rx="1.2" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />
-                    <rect x="5" y="9" width="10" height="7" rx="1.2" />
-                    <path d="M12.8 4.2l3.2 3.2" strokeLinecap="round" />
-                  </svg>
-                )}
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M6.5 9V6.8a3.5 3.5 0 1 1 7 0V9" strokeLinecap="round" />
+                  <rect x="5" y="9" width="10" height="7" rx="1.2" />
+                </svg>
               </ControlButton>
             </Controls>
           </ReactFlow>
         </div>
       </main>
 
+      {panelOpen && (
+        <aside className="hidden min-h-0 md:col-start-3 md:row-start-2 md:row-end-4 md:block">
+          <ContextPanel
+            open={panelOpen}
+            transcript={transcript}
+            panelText={panelText}
+            onClose={() => {
+              setPanelOpen(false);
+              setPanelAnchorNodeId(null);
+            }}
+            onPanelTextChange={setPanelText}
+            onSend={() => void sendPanelContinue()}
+          />
+        </aside>
+      )}
+
+      {panelOpen && (
+        <div className="absolute inset-0 z-[1200] md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/30"
+            aria-label="Close context chat"
+            onClick={() => {
+              setPanelOpen(false);
+              setPanelAnchorNodeId(null);
+            }}
+          />
+          <div className="absolute inset-y-0 right-0 w-full max-w-[420px]">
+            <ContextPanel
+              open={panelOpen}
+              transcript={transcript}
+              panelText={panelText}
+              onClose={() => {
+                setPanelOpen(false);
+                setPanelAnchorNodeId(null);
+              }}
+              onPanelTextChange={setPanelText}
+              onSend={() => void sendPanelContinue()}
+            />
+          </div>
+        </div>
+      )}
+
       <ElaborateButton
         action={elaborateAction}
-        onClick={(action) => {
+        onElaborateClick={(action) => {
           setSelectedNode(action.nodeId);
           void sendContinue("elaboration", action.text);
         }}
+        onClose={() => setElaborateAction(null)}
       />
 
-      <ContextPanel
-        open={panelOpen}
-        transcript={transcript}
-        panelText={panelText}
-        onClose={() => setPanelOpen(false)}
-        onPanelTextChange={setPanelText}
-        onSend={() => void sendPanelContinue()}
-      />
+      {wheelHoverNodeId && (
+        <div className="pointer-events-none absolute left-1/2 top-14 z-[1400] w-72 -translate-x-1/2 rounded-md border border-stone-300 bg-paper/95 px-3 py-1 shadow-float backdrop-blur">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-700">
+            {wheelHoverActive
+              ? "Wheel Mode Active"
+              : `Hold To Enable Wheel Mode (${(assistantWheelHoldMs / 1000).toFixed(1)}s)`}
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-200">
+            <div
+              className={`h-full rounded-full ${wheelHoverActive ? "bg-accent" : "bg-stone-500"}`}
+              style={{ width: `${Math.max(0, Math.min(1, wheelHoverProgress)) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="row-start-3 md:col-start-2 md:row-start-3">
         <ComposerBar
         selectedNodeId={selectedNodeId}
+        showFullSelectedNodeId={showFullSelectedNodeId}
         composerText={composerText}
         loading={loading}
         inputRef={composerInputRef}
+        onToggleSelectedNodeIdMode={() => setShowFullSelectedNodeId((value) => !value)}
         onComposerTextChange={setComposerText}
         onSend={() => void sendContinue("normal")}
         />

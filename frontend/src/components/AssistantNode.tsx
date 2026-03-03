@@ -1,6 +1,7 @@
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
+import { normalizeSelectionToWordBoundaries } from "../features/selection/normalizeSelection";
 import type { NodeData } from "../store/useGraphStore";
 
 interface AssistantNodeData extends NodeData {
@@ -15,16 +16,25 @@ interface AssistantNodeData extends NodeData {
 function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
   const measureRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLParagraphElement>(null);
+  const sizeCacheRef = useRef<Map<string, { w: number; h: number }>>(new Map());
   const [size, setSize] = useState({ w: 360, h: 140 });
   const wheelEligible = !data.variantLocked && !!data.variants;
 
   useLayoutEffect(() => {
+    const cacheKey = data.text;
+    const cached = sizeCacheRef.current.get(cacheKey);
+    if (cached) {
+      setSize(cached);
+      return;
+    }
     if (!measureRef.current) {
       return;
     }
     const nextW = Math.min(880, Math.max(280, measureRef.current.scrollWidth + 44));
     const nextH = Math.min(680, Math.max(110, measureRef.current.scrollHeight + 62));
-    setSize({ w: nextW, h: nextH });
+    const measured = { w: nextW, h: nextH };
+    sizeCacheRef.current.set(cacheKey, measured);
+    setSize(measured);
   }, [data.text]);
 
   const handleMouseUp = () => {
@@ -32,12 +42,15 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
     if (!selection || selection.rangeCount === 0) {
       return;
     }
-    const text = selection.toString().trim();
-    if (!text || !contentRef.current || !contentRef.current.contains(selection.anchorNode)) {
+    if (!contentRef.current || !contentRef.current.contains(selection.anchorNode)) {
+      return;
+    }
+    const text = normalizeSelectionToWordBoundaries(selection, contentRef.current);
+    if (!text) {
       return;
     }
     const rect = selection.getRangeAt(0).getBoundingClientRect();
-    data.onSelectElaboration?.(id, text, rect.left + rect.width / 2, rect.top - 12);
+    data.onSelectElaboration?.(id, text, rect.left + rect.width / 2, rect.top);
   };
 
   return (
@@ -73,7 +86,19 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
             <>
               <button
                 className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
-                onClick={() => data.onCycleVariant?.(id, -1)}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  data.onCycleVariant?.(id, -1);
+                }}
                 type="button"
                 aria-label="Previous variant"
               >
@@ -83,7 +108,19 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
               </button>
               <button
                 className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
-                onClick={() => data.onCycleVariant?.(id, 1)}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  data.onCycleVariant?.(id, 1);
+                }}
                 type="button"
                 aria-label="Next variant"
               >
@@ -105,7 +142,19 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
         <div className="flex items-center gap-2">
           <button
             className="rounded bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
-            onClick={() => data.onOpenPanel?.(id)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              data.onOpenPanel?.(id);
+            }}
             type="button"
             aria-label="Open context panel"
             title="Open context panel"
@@ -117,11 +166,21 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
           </button>
         </div>
       </div>
-      <p ref={contentRef} onMouseUp={handleMouseUp} className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+      <p
+        ref={contentRef}
+        onMouseDown={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseUp={handleMouseUp}
+        className="nodrag nopan cursor-text select-text whitespace-pre-wrap text-sm leading-relaxed text-ink"
+      >
         {data.text}
       </p>
       <div className="pointer-events-none absolute -z-10 opacity-0">
-        <p ref={measureRef} className="whitespace-pre-wrap text-sm leading-relaxed">
+        <p
+          ref={measureRef}
+          className="inline-block whitespace-pre-wrap text-sm leading-relaxed"
+          style={{ width: "fit-content", maxWidth: "820px" }}
+        >
           {data.text}
         </p>
       </div>
