@@ -15,13 +15,19 @@ If live model calls are unavailable, deterministic fallback responses are used.
    - `Copy-Item backend/.env.example backend/.env`
    - `Copy-Item frontend/.env.example frontend/.env`
 2. Set `OPENAI_API_KEY` in `backend/.env` (optional if fallback-only).
+3. Create backend virtual environment:
+   - `cd backend`
+   - `python -m venv .venv`
+   - `.venv\Scripts\activate`
+   - `python -m pip install --upgrade pip`
+   - `python -m pip install -r requirements.txt`
 
 ## Run
 1. Start PostgreSQL (data persists in `infra/postgres/data`):
    - `docker compose -f infra/docker-compose.yml --env-file infra/.env up`
 2. Backend:
    - `cd backend`
-   - `python -m pip install -r requirements.txt`
+   - `.venv\Scripts\Activate.ps1`
    - `python -m uvicorn app.main:app --reload --port 8713`
 3. Frontend:
    - `cd frontend`
@@ -31,7 +37,7 @@ If live model calls are unavailable, deterministic fallback responses are used.
 Open `http://localhost:5173`.
 
 ## Test
-- Backend: `cd backend && python -m pytest -q`
+- Backend: `cd backend && .venv\Scripts\Activate.ps1 && python -m pytest -q`
 - Frontend: `cd frontend && npm run test && npm run build`
 
 ## Architecture
