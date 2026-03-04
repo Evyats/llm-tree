@@ -11,6 +11,7 @@ export interface NodeData {
   text: string;
   variants: { short: string; medium: string; long: string } | null;
   variantIndex: number;
+  pending?: boolean;
   variantLocked?: boolean;
   layer?: number;
   siblingOrder?: number;

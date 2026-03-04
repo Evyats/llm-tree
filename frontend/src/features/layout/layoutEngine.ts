@@ -326,6 +326,7 @@ export function buildFixedPositions(
       const rowTop = rowTopByRootLayer.get(rootId)?.get(layer) ?? FIXED_BASE_TOP;
       const targetById = new Map<string, number>();
       const anchorById = new Map<string, boolean>();
+      const siblingCentersByParent = new Map<string, Map<string, number>>();
       for (const node of groupNodesRaw) {
         const parentId = node.data.parentId;
         if (parentId) {
@@ -333,11 +334,34 @@ export function buildFixedPositions(
           const sameRoleSiblings = siblings.filter((child) => child.data.role === node.data.role);
           const isSingleContinuation = sameRoleSiblings.length === 1 && sameRoleSiblings[0]?.id === node.id;
           const isOnlyChild = siblings.length === 1;
+          const parentPos = positions.get(parentId);
           if (isSingleContinuation || isOnlyChild) {
-            const parentPos = positions.get(parentId);
             if (parentPos) {
               targetById.set(node.id, parentPos.x);
               anchorById.set(node.id, true);
+              continue;
+            }
+          }
+          if (parentPos && siblings.length > 1) {
+            let centers = siblingCentersByParent.get(parentId);
+            if (!centers) {
+              centers = new Map<string, number>();
+              const widths = siblings.map((sibling) => sizeById.get(sibling.id)?.width ?? 280);
+              const totalWidth =
+                widths.reduce((sum, width) => sum + width, 0) + siblingGap * Math.max(0, siblings.length - 1);
+              let cursor = parentPos.x - totalWidth / 2;
+              for (let i = 0; i < siblings.length; i += 1) {
+                const sibling = siblings[i];
+                const width = widths[i] ?? 280;
+                centers.set(sibling.id, cursor + width / 2);
+                cursor += width + siblingGap;
+              }
+              siblingCentersByParent.set(parentId, centers);
+            }
+            const center = centers.get(node.id);
+            if (typeof center === "number") {
+              targetById.set(node.id, center);
+              anchorById.set(node.id, false);
               continue;
             }
           }
@@ -408,12 +432,10 @@ export function buildFixedPositions(
     const bounds = components.get(rootId);
     if (!bounds) continue;
     const currentShift = componentShift.get(rootId) ?? 0;
-    if (prevMaxX !== null) {
-      const minAllowedLeft = prevMaxX + treeGap;
-      const currentLeft = bounds.minX + currentShift;
-      if (currentLeft < minAllowedLeft) {
-        componentShift.set(rootId, currentShift + (minAllowedLeft - currentLeft));
-      }
+    const currentLeft = bounds.minX + currentShift;
+    const desiredLeft = prevMaxX === null ? currentLeft : prevMaxX + treeGap;
+    if (currentLeft !== desiredLeft) {
+      componentShift.set(rootId, currentShift + (desiredLeft - currentLeft));
     }
     const appliedShift = componentShift.get(rootId) ?? 0;
     prevMaxX = bounds.maxX + appliedShift;

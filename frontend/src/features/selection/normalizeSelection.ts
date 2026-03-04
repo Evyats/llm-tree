@@ -2,6 +2,10 @@ function isWordChar(char: string): boolean {
   return /[\p{L}\p{N}_]/u.test(char);
 }
 
+function isWhitespace(char: string): boolean {
+  return /\s/u.test(char);
+}
+
 function getTextOffset(root: HTMLElement, node: Node, offset: number): number | null {
   if (node !== root && !root.contains(node)) {
     return null;
@@ -44,6 +48,17 @@ export function normalizeSelectionToWordBoundaries(selection: Selection, root: H
     return null;
   }
 
+  // Ignore outer whitespace first so selecting "word " won't expand into the next word.
+  while (start < end && isWhitespace(fullText[start] ?? "")) {
+    start += 1;
+  }
+  while (end > start && isWhitespace(fullText[end - 1] ?? "")) {
+    end -= 1;
+  }
+  if (start >= end) {
+    return null;
+  }
+
   while (start > 0 && isWordChar(fullText[start - 1] ?? "")) {
     start -= 1;
   }
@@ -54,4 +69,3 @@ export function normalizeSelectionToWordBoundaries(selection: Selection, root: H
   const normalized = fullText.slice(start, end).trim();
   return normalized || null;
 }
-

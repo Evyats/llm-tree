@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
 import { normalizeSelectionToWordBoundaries } from "../features/selection/normalizeSelection";
@@ -9,25 +9,39 @@ interface AssistantNodeData extends NodeData {
   onCycleVariant?: (nodeId: string, direction: -1 | 1) => void;
   onSelectElaboration?: (nodeId: string, text: string, x: number, y: number) => void;
   onOpenPanel?: (nodeId: string) => void;
+  panelActive?: boolean;
   contextMenuOpen?: boolean;
   onDeleteBranch?: (nodeId: string) => void;
   onPlaceholderTwo?: () => void;
-  onPlaceholderThree?: () => void;
   onHoverWheelStart?: (nodeId: string) => void;
   onHoverWheelEnd?: (nodeId: string) => void;
   onHoverWheelScroll?: (nodeId: string, deltaY: number) => boolean;
+  onToggleContextMenu?: (nodeId: string) => void;
 }
+
+const assistantNodeSizeCache = new Map<string, { w: number; h: number }>();
+
+function estimateAssistantFrameSize(text: string) {
+  const textLen = text.length;
+  const width = Math.min(700, Math.max(240, 220 + textLen * 5.2));
+  const lines = Math.max(1, Math.ceil(textLen / 56));
+  const height = Math.min(680, Math.max(110, 92 + lines * 22));
+  return { w: width, h: height };
+}
+
+const ACTION_RAIL_EXPANDED_WIDTH = 44;
 
 function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
   const measureRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLParagraphElement>(null);
-  const sizeCacheRef = useRef<Map<string, { w: number; h: number }>>(new Map());
-  const [size, setSize] = useState({ w: 320, h: 140 });
+  const cacheKey = `${id}:${data.text}`;
+  const [size, setSize] = useState(() => assistantNodeSizeCache.get(cacheKey) ?? estimateAssistantFrameSize(data.text));
   const wheelEligible = !data.variantLocked && !!data.variants;
+  const canCycleVariants = !data.pending && !data.variantLocked && !!data.variants;
+  const contentWidth = Math.max(190, size.w - 32);
 
   useLayoutEffect(() => {
-    const cacheKey = data.text;
-    const cached = sizeCacheRef.current.get(cacheKey);
+    const cached = assistantNodeSizeCache.get(cacheKey);
     if (cached) {
       setSize(cached);
       return;
@@ -38,24 +52,35 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
     const nextW = Math.min(700, Math.max(240, measureRef.current.scrollWidth + 36));
     const nextH = Math.min(680, Math.max(110, measureRef.current.scrollHeight + 62));
     const measured = { w: nextW, h: nextH };
-    sizeCacheRef.current.set(cacheKey, measured);
+    assistantNodeSizeCache.set(cacheKey, measured);
     setSize(measured);
-  }, [data.text]);
+  }, [cacheKey]);
 
-  const handleMouseUp = () => {
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
+  const handleMouseUp = (event: MouseEvent) => {
+    if (event.button !== 0) {
       return;
     }
-    if (!contentRef.current || !contentRef.current.contains(selection.anchorNode)) {
-      return;
+    requestAnimationFrame(() => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        return;
+      }
+      if (!contentRef.current || !contentRef.current.contains(selection.anchorNode)) {
+        return;
+      }
+      const text = normalizeSelectionToWordBoundaries(selection, contentRef.current);
+      if (!text) {
+        return;
+      }
+      const rect = selection.getRangeAt(0).getBoundingClientRect();
+      data.onSelectElaboration?.(id, text, rect.left + rect.width / 2, rect.top);
+    });
+  };
+
+  const stopActionPointer = (event: MouseEvent | PointerEvent) => {
+    if (event.button === 0) {
+      event.stopPropagation();
     }
-    const text = normalizeSelectionToWordBoundaries(selection, contentRef.current);
-    if (!text) {
-      return;
-    }
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
-    data.onSelectElaboration?.(id, text, rect.left + rect.width / 2, rect.top);
   };
 
   return (
@@ -77,23 +102,28 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
         }
       }}
       onDoubleClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        data.onToggleContextMenu?.(id);
+      }}
       className={`rounded-2xl border bg-white px-4 py-3 shadow-float transition-all duration-300 ${
         selected ? "border-accent" : "border-stone-300"
       }`}
       style={{
-        width: size.w + (data.contextMenuOpen ? 156 : 0),
-        height: data.contextMenuOpen ? Math.max(size.h, 172) : size.h,
+        width: size.w + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0),
+        height: size.h,
         transition: "width 260ms ease, height 260ms ease, border-color 200ms ease",
       }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
       <div className="flex h-full items-stretch gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-none" style={{ width: contentWidth }}>
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-accent">Assistant</div>
-              {!data.variantLocked && (
+              {canCycleVariants && (
                 <>
                   <NodeActionButton
                     className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
@@ -120,7 +150,7 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
                 </>
               )}
             </div>
-            {!data.variantLocked && (
+            {canCycleVariants && (
               <div className="h-1.5 w-20 overflow-hidden rounded-full bg-stone-200" aria-hidden>
                 <div
                   className="h-full rounded-full bg-accent transition-all duration-200"
@@ -130,7 +160,11 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
             )}
             <div className="flex items-center gap-2">
               <NodeActionButton
-                className="rounded bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
+                className={`rounded px-2 py-1 text-xs text-white ${
+                  data.panelActive
+                    ? "bg-[#0f5d77] shadow-[inset_0_1px_3px_rgba(0,0,0,0.35)]"
+                    : "bg-accent hover:opacity-90"
+                }`}
                 onClick={() => {
                   data.onOpenPanel?.(id);
                 }}
@@ -146,51 +180,69 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
           </div>
           <p
             ref={contentRef}
-            onMouseDown={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => {
+              if (event.button === 0) {
+                event.stopPropagation();
+              }
+            }}
+            onPointerDown={(event) => {
+              if (event.button === 0) {
+                event.stopPropagation();
+              }
+            }}
             onMouseUp={handleMouseUp}
             className="nodrag nopan cursor-text select-text whitespace-pre-wrap text-sm leading-relaxed text-ink"
           >
-            {data.text}
+            {data.pending ? (
+              <span className="inline-flex items-center gap-1.5 text-stone-500" aria-label="Generating response">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-accent/70 [animation-delay:0ms]" />
+                <span className="h-2 w-2 animate-pulse rounded-full bg-accent/70 [animation-delay:120ms]" />
+                <span className="h-2 w-2 animate-pulse rounded-full bg-accent/70 [animation-delay:240ms]" />
+              </span>
+            ) : (
+              data.text
+            )}
           </p>
         </div>
         {data.contextMenuOpen && (
-          <div className="flex min-w-[136px] flex-col justify-center gap-2 border-l border-stone-300 pl-3">
+          <div className="flex w-fit flex-col justify-start gap-2 border-l border-stone-300 pl-2.5 pt-0.5">
             <button
               type="button"
               data-node-action-button="true"
-              className="rounded px-2 py-1 text-left text-xs text-red-700 hover:bg-red-50"
+              className="nodrag nopan flex h-7 w-7 items-center justify-center rounded text-red-700 hover:bg-red-50"
+              onMouseDown={stopActionPointer}
+              onPointerDown={stopActionPointer}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 data.onDeleteBranch?.(id);
               }}
+              title="Delete branch"
+              aria-label="Delete branch"
             >
-              Delete Branch
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M4 6h12M8 6V4h4v2M7 6l.6 9h4.8L13 6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
             <button
               type="button"
               data-node-action-button="true"
-              className="rounded px-2 py-1 text-left text-xs text-stone-700 hover:bg-stone-100"
+              className="nodrag nopan flex h-7 w-7 items-center justify-center rounded text-stone-700 hover:bg-stone-100"
+              onMouseDown={stopActionPointer}
+              onPointerDown={stopActionPointer}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 data.onPlaceholderTwo?.();
               }}
+              title="Extract path"
+              aria-label="Extract path"
             >
-              Extract Path
-            </button>
-            <button
-              type="button"
-              data-node-action-button="true"
-              className="rounded px-2 py-1 text-left text-xs text-stone-700 hover:bg-stone-100"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                data.onPlaceholderThree?.();
-              }}
-            >
-              Placeholder 3
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M6 4v5a3 3 0 0 0 3 3h5" strokeLinecap="round" />
+                <path d="M14 12l-2-2m2 2l-2 2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 4h2M4 16h2" strokeLinecap="round" />
+              </svg>
             </button>
           </div>
         )}

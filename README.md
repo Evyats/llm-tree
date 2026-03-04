@@ -27,7 +27,7 @@ If live model calls are unavailable, deterministic fallback responses are used.
    - `docker compose -f infra/docker-compose.yml --env-file infra/.env up`
 2. Backend:
    - `cd backend`
-   - `.venv\Scripts\Activate.ps1`
+   - `.venv\Scripts\Activate`
    - `python -m uvicorn app.main:app --reload --port 8713`
 3. Frontend:
    - `cd frontend`

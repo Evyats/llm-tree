@@ -38,15 +38,15 @@ import {
   buildChildrenBySource,
   buildCollapsedProxyTargets,
   buildHiddenNodeIds,
-  isFoldableEdge,
   buildLayoutNodeSizes,
   buildLayoutNodes,
   buildProjectedUiEdges,
   collectSubtreeNodeIds,
   pruneCollapsedEdgeSources,
   pruneCollapsedTargets,
+  resolveFoldEdge,
 } from "./features/graph/collapseProjection";
-import { COLLAPSED_NODE_PREFIX, COLLAPSED_NODE_SIZE } from "./features/graph/constants";
+import { COLLAPSED_NODE_SIZE } from "./features/graph/constants";
 import { buildDeleteProjection } from "./features/graph/deleteProjection";
 import {
   EDGE_LINE_STYLE_OPTIONS,
@@ -83,6 +83,7 @@ const DEFAULT_ASSISTANT_WHEEL_HOLD_MS = 0;
 const ASSISTANT_WHEEL_STEP_COOLDOWN_MS = 140;
 const NODE_ORIGIN_X = 0.5;
 const NODE_ORIGIN_Y = 0;
+const COLLAPSED_PREVIEW_TEXT_MAX = 42;
 
 export default function App() {
   const {
@@ -416,8 +417,11 @@ export default function App() {
       return;
     }
     const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) {
+        return;
+      }
       const target = event.target;
-      if (target instanceof HTMLElement && target.closest('[data-node-action-button="true"]')) {
+      if (target instanceof Element && target.closest('[data-node-action-button="true"]')) {
         return;
       }
       setNodeContextMenuNodeId(null);
@@ -432,8 +436,9 @@ export default function App() {
     panelAnchorNodeId,
     composerText,
     panelText,
+    nodes,
+    edges,
     nodesById,
-    appendEntities,
     refreshGraphList,
     setSelectedNode,
     setResponseSource,
@@ -441,6 +446,8 @@ export default function App() {
     setComposerText,
     setPanelText,
     setPanelAnchorNodeId,
+    setNodes,
+    setEdges,
     setLoading,
     setError,
     clearElaborateAction: () => setElaborateAction(null),
@@ -627,11 +634,11 @@ export default function App() {
     [collapsedTargets, hiddenNodeIds, nodesById]
   );
   const layoutNodes = useMemo(
-    () => buildLayoutNodes(nodes, edges, hiddenNodeIds, collapsedProxyTargets, collapsedEdgeSources, COLLAPSED_NODE_PREFIX),
-    [collapsedEdgeSources, collapsedProxyTargets, edges, hiddenNodeIds, nodes]
+    () => buildLayoutNodes(nodes, hiddenNodeIds, collapsedProxyTargets),
+    [collapsedProxyTargets, hiddenNodeIds, nodes]
   );
   const layoutNodeSizes = useMemo(
-    () => buildLayoutNodeSizes(nodeSizes, collapsedProxyTargets, COLLAPSED_NODE_PREFIX, COLLAPSED_NODE_SIZE),
+    () => buildLayoutNodeSizes(nodeSizes, collapsedProxyTargets, COLLAPSED_NODE_SIZE),
     [collapsedProxyTargets, nodeSizes]
   );
 
@@ -640,14 +647,31 @@ export default function App() {
     [layoutNodeSizes, layoutNodes, rowGap, siblingGap, treeGap]
   );
 
-  const uiNodes: Node<NodeData | { label: string; hiddenCount: number; onUnfold: () => void }>[] = useMemo(
+  const uiNodes: Node<
+    NodeData | { label: string; previewText: string; hiddenCount: number; onUnfold: () => void }
+  >[] =
+    useMemo(
     () => {
+      const truncatePreview = (text: string) =>
+        text.length > COLLAPSED_PREVIEW_TEXT_MAX ? `${text.slice(0, COLLAPSED_PREVIEW_TEXT_MAX - 3)}...` : text;
+      const collapsedVisibleSet = new Set(collapsedProxyTargets);
       const baseNodes = nodes
         .filter((node) => !hiddenNodeIds.has(node.id))
         .map((node) => ({
         ...node,
+        type: collapsedVisibleSet.has(node.id) ? "collapsedNode" : node.type,
         position: fixedMode ? structure.positions.get(node.id) ?? node.position : node.position,
         data: {
+          ...(collapsedVisibleSet.has(node.id)
+            ? {
+                label: "Folded",
+                previewText: truncatePreview((node.data.text ?? "").trim()),
+                hiddenCount: Math.max(0, getSubtreeNodeIds(node.id).size - 1),
+                onUnfold: () => {
+                  unfoldSubtree(getSubtreeNodeIds(node.id));
+                },
+              }
+            : {}),
           ...node.data,
           layer: structure.meta.get(node.id)?.layer ?? 0,
           siblingOrder: structure.meta.get(node.id)?.siblingOrder ?? 0,
@@ -657,8 +681,14 @@ export default function App() {
             setElaborateAction({ nodeId, text, x, y });
           },
           onOpenPanel: (nodeId: string) => {
+            if (panelOpen && panelAnchorNodeId === nodeId) {
+              setPanelOpen(false);
+              setPanelAnchorNodeId(null);
+              return;
+            }
             void openContextPanelForNode(nodeId);
           },
+          panelActive: panelOpen && panelAnchorNodeId === node.id,
           contextMenuOpen: nodeContextMenuNodeId === node.id,
           onDeleteBranch: (nodeId: string) => {
             void handleDeleteNodeSubtree(nodeId);
@@ -666,7 +696,6 @@ export default function App() {
           onPlaceholderTwo: () => {
             void handleExtractPathToTree(node.id);
           },
-          onPlaceholderThree: () => {},
           onHoverWheelStart: (nodeId: string) => {
             handleAssistantHoverStart(nodeId);
           },
@@ -674,46 +703,25 @@ export default function App() {
             handleAssistantHoverEnd(nodeId);
           },
           onHoverWheelScroll: (nodeId: string, deltaY: number) => handleAssistantWheel(nodeId, deltaY),
+          onToggleContextMenu: (nodeId: string) => {
+            setSelectedNode(nodeId);
+            setNodeContextMenuNodeId((prev) => (prev === nodeId ? null : nodeId));
+          },
         } as NodeData & {
           onCycleVariant: (nodeId: string, direction: -1 | 1) => void;
           onSelectElaboration: (nodeId: string, text: string, x: number, y: number) => void;
           onOpenPanel: (nodeId: string) => void;
+          panelActive: boolean;
           contextMenuOpen: boolean;
           onDeleteBranch: (nodeId: string) => void;
           onPlaceholderTwo: () => void;
-          onPlaceholderThree: () => void;
           onHoverWheelStart: (nodeId: string) => void;
           onHoverWheelEnd: (nodeId: string) => void;
           onHoverWheelScroll: (nodeId: string, deltaY: number) => boolean;
+          onToggleContextMenu: (nodeId: string) => void;
         },
       }));
-
-      const collapsedNodes: Node<{ label: string; hiddenCount: number; onUnfold: () => void }>[] = [];
-      for (const targetId of collapsedProxyTargets) {
-        const node = nodesById.get(targetId);
-        if (!node) continue;
-        const collapsedId = `${COLLAPSED_NODE_PREFIX}${targetId}`;
-        const position = fixedMode ? structure.positions.get(collapsedId) ?? node.position : node.position;
-        const hiddenCount = getSubtreeNodeIds(targetId).size;
-        collapsedNodes.push({
-          id: collapsedId,
-          type: "collapsedNode",
-          position,
-          draggable: false,
-          selectable: true,
-          hidden: false,
-          style: { visibility: "visible", width: COLLAPSED_NODE_SIZE.width, minHeight: COLLAPSED_NODE_SIZE.minHeight },
-          data: {
-            label: "Folded",
-            hiddenCount,
-            onUnfold: () => {
-              unfoldSubtree(getSubtreeNodeIds(targetId));
-            },
-          },
-        });
-      }
-
-      return [...baseNodes, ...collapsedNodes];
+      return baseNodes;
     },
     [
       assistantWithBranch,
@@ -726,7 +734,8 @@ export default function App() {
       handleAssistantWheel,
       hiddenNodeIds,
       nodes,
-      nodesById,
+      panelAnchorNodeId,
+      panelOpen,
       setPanelOpen,
       setSelectedNode,
       setTranscript,
@@ -742,16 +751,11 @@ export default function App() {
     return buildProjectedUiEdges(
       edges,
       hiddenNodeIds,
-      collapsedProxyTargets,
-      collapsedEdgeSources,
       nodesById,
-      COLLAPSED_NODE_PREFIX,
       { type: userEdgeType, motion: userEdgeMotion, lineStyle: userEdgeLineStyle },
       { type: assistantEdgeType, motion: assistantEdgeMotion, lineStyle: assistantEdgeLineStyle }
     );
   }, [
-    collapsedEdgeSources,
-    collapsedProxyTargets,
     edges,
     hiddenNodeIds,
     nodesById,
@@ -1046,30 +1050,27 @@ export default function App() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onEdgeClick={(event, edge) => {
-              if (!isFoldableEdge(edge, nodesById, hiddenNodeIds)) {
+              const foldResolution = resolveFoldEdge(edge, nodesById, hiddenNodeIds);
+              if (!foldResolution) {
                 return;
               }
               event.preventDefault();
               event.stopPropagation();
-              collapseByEdge(edge.target, edge.source);
+              if (collapsedTargets.has(foldResolution.targetId)) {
+                unfoldSubtree(getSubtreeNodeIds(foldResolution.targetId));
+                return;
+              }
+              collapseByEdge(foldResolution.targetId, foldResolution.sourceId);
             }}
-            onNodeClick={(_, node) => {
-              if (node.id.startsWith(COLLAPSED_NODE_PREFIX)) {
+            onNodeClick={(event, node) => {
+              if ("button" in event && event.button !== 0) {
+                return;
+              }
+              if (node.type === "collapsedNode") {
                 return;
               }
               setSelectedNode(node.id);
               setNodeContextMenuNodeId(null);
-            }}
-            onNodeContextMenu={(event, node) => {
-              if (node.id.startsWith(COLLAPSED_NODE_PREFIX)) {
-                event.preventDefault();
-                event.stopPropagation();
-                return;
-              }
-              event.preventDefault();
-              event.stopPropagation();
-              setSelectedNode(node.id);
-              setNodeContextMenuNodeId(node.id);
             }}
             onNodeDoubleClick={(event) => {
               event.preventDefault();

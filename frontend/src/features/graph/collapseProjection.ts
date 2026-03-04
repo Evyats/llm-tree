@@ -4,6 +4,11 @@ import type { NodeData } from "../../store/useGraphStore";
 import type { EdgeAppearance } from "./edgeStyles";
 import { styleEdgeWithAppearance } from "./edgeStyles";
 
+interface FoldEdgeResolution {
+  sourceId: string;
+  targetId: string;
+}
+
 export function buildChildrenBySource(edges: Edge[]) {
   const map = new Map<string, string[]>();
   for (const edge of edges) {
@@ -35,7 +40,11 @@ export function buildHiddenNodeIds(
 ) {
   const hidden = new Set<string>();
   for (const targetId of collapsedTargets) {
-    for (const id of getSubtreeNodeIds(targetId)) {
+    const subtree = getSubtreeNodeIds(targetId);
+    for (const id of subtree) {
+      if (id === targetId) {
+        continue;
+      }
       hidden.add(id);
     }
   }
@@ -92,43 +101,26 @@ export function pruneCollapsedEdgeSources(
 
 export function buildLayoutNodes(
   nodes: Node<NodeData>[],
-  edges: Edge[],
   hiddenNodeIds: Set<string>,
-  collapsedProxyTargets: string[],
-  collapsedEdgeSources: Map<string, string>,
-  collapsedPrefix: string
+  collapsedProxyTargets: string[]
 ) {
-  const edgeParentByTarget = new Map<string, string>();
-  for (const edge of edges) {
-    if (!edgeParentByTarget.has(edge.target)) {
-      edgeParentByTarget.set(edge.target, edge.source);
-    }
-  }
   const proxyTargetSet = new Set(collapsedProxyTargets);
   const ordered: Node<NodeData>[] = [];
   for (const node of nodes) {
+    if (hiddenNodeIds.has(node.id)) {
+      continue;
+    }
     if (proxyTargetSet.has(node.id)) {
-      const parentId = node.data.parentId ?? edgeParentByTarget.get(node.id) ?? null;
-      const collapsedParentId = collapsedEdgeSources.get(node.id) ?? parentId;
       ordered.push({
-        id: `${collapsedPrefix}${node.id}`,
+        ...node,
         type: "collapsedNode",
-        position: node.position,
         data: {
-          role: node.data.role,
-          parentId: collapsedParentId,
-          text: "Folded",
-          variants: null,
-          variantIndex: 0,
-          mode: "normal",
-          highlightedText: null,
+          ...node.data,
         },
       });
       continue;
     }
-    if (!hiddenNodeIds.has(node.id)) {
-      ordered.push(node);
-    }
+    ordered.push(node);
   }
   return ordered;
 }
@@ -136,12 +128,11 @@ export function buildLayoutNodes(
 export function buildLayoutNodeSizes(
   nodeSizes: Map<string, { width: number; height: number }>,
   collapsedProxyTargets: string[],
-  collapsedPrefix: string,
   collapsedSize: { width: number; minHeight: number }
 ) {
   const next = new Map(nodeSizes);
   for (const targetId of collapsedProxyTargets) {
-    next.set(`${collapsedPrefix}${targetId}`, { width: collapsedSize.width, height: collapsedSize.minHeight });
+    next.set(targetId, { width: collapsedSize.width, height: collapsedSize.minHeight });
   }
   return next;
 }
@@ -149,10 +140,7 @@ export function buildLayoutNodeSizes(
 export function buildProjectedUiEdges(
   edges: Edge[],
   hiddenNodeIds: Set<string>,
-  collapsedProxyTargets: string[],
-  collapsedEdgeSources: Map<string, string>,
   nodesById: Map<string, Node<NodeData>>,
-  collapsedPrefix: string,
   userAppearance: EdgeAppearance,
   assistantAppearance: EdgeAppearance
 ) {
@@ -165,33 +153,8 @@ export function buildProjectedUiEdges(
   const visibleEdges = edges.filter((edge) => !hiddenNodeIds.has(edge.source) && !hiddenNodeIds.has(edge.target));
   const baseEdges = visibleEdges.map(styleEdge);
 
-  const edgeParentByTarget = new Map<string, string>();
-  for (const edge of edges) {
-    if (!edgeParentByTarget.has(edge.target)) {
-      edgeParentByTarget.set(edge.target, edge.source);
-    }
-  }
-
-  const collapsedEdges = collapsedProxyTargets
-    .map((targetId) => {
-      const sourceId =
-        collapsedEdgeSources.get(targetId) ??
-        edgeParentByTarget.get(targetId) ??
-        nodesById.get(targetId)?.data.parentId ??
-        null;
-      if (!sourceId || hiddenNodeIds.has(sourceId)) {
-        return null;
-      }
-      return styleEdge({
-        id: `collapsed-edge:${sourceId}->${targetId}`,
-        source: sourceId,
-        target: `${collapsedPrefix}${targetId}`,
-      });
-    })
-    .filter((edge): edge is Edge => edge !== null);
-
   const deduped = new Map<string, Edge>();
-  for (const edge of [...baseEdges, ...collapsedEdges]) {
+  for (const edge of baseEdges) {
     deduped.set(edge.id, edge);
   }
   return Array.from(deduped.values());
@@ -202,11 +165,58 @@ export function isFoldableEdge(
   nodesById: Map<string, Node<NodeData>>,
   hiddenNodeIds: Set<string>
 ) {
+  return resolveFoldEdge(edge, nodesById, hiddenNodeIds) !== null;
+}
+
+export function resolveFoldEdge(
+  edge: Edge,
+  nodesById: Map<string, Node<NodeData>>,
+  hiddenNodeIds: Set<string>
+): FoldEdgeResolution | null {
   if (edge.id.startsWith("collapsed-edge:")) {
-    return false;
+    return null;
   }
   if (hiddenNodeIds.has(edge.target)) {
-    return false;
+    return null;
   }
-  return nodesById.get(edge.source)?.data.role === "assistant";
+  const sourceNode = nodesById.get(edge.source);
+  if (!sourceNode) {
+    return null;
+  }
+
+  if (sourceNode.data.role === "assistant") {
+    return { sourceId: edge.source, targetId: edge.target };
+  }
+  if (sourceNode.data.role !== "user") {
+    return null;
+  }
+
+  // For user-origin edges, resolve to the equivalent assistant-anchored branch:
+  // walk up consecutive user parents until reaching the assistant parent.
+  let cursor: Node<NodeData> | undefined = sourceNode;
+  let firstUserAfterAssistant: Node<NodeData> | null = sourceNode;
+  let topMostUserInChain: Node<NodeData> = sourceNode;
+  while (cursor) {
+    const parentId = cursor.data.parentId;
+    if (!parentId) {
+      return { sourceId: topMostUserInChain.id, targetId: topMostUserInChain.id };
+    }
+    const parent = nodesById.get(parentId);
+    if (!parent) {
+      return { sourceId: topMostUserInChain.id, targetId: topMostUserInChain.id };
+    }
+    if (parent.data.role === "assistant") {
+      if (!firstUserAfterAssistant || hiddenNodeIds.has(firstUserAfterAssistant.id)) {
+        return null;
+      }
+      return { sourceId: parent.id, targetId: firstUserAfterAssistant.id };
+    }
+    if (parent.data.role !== "user") {
+      return { sourceId: topMostUserInChain.id, targetId: topMostUserInChain.id };
+    }
+    firstUserAfterAssistant = parent;
+    topMostUserInChain = parent;
+    cursor = parent;
+  }
+  return null;
 }
