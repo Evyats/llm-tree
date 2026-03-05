@@ -11,6 +11,7 @@ class ContinueMessageRequest(BaseModel):
     user_text: str = Field(min_length=1)
     mode: Literal["normal", "elaboration"] = "normal"
     highlighted_text: str | None = None
+    selected_model: str | None = None
 
 
 class ContinueChatRequest(BaseModel):
@@ -18,6 +19,7 @@ class ContinueChatRequest(BaseModel):
     anchor_node_id: str
     anchor_variant_index: int | None = Field(default=None, ge=0, le=2)
     user_text: str = Field(min_length=1)
+    selected_model: str | None = None
 
 
 class ContinueResponse(BaseModel):

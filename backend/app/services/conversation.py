@@ -72,6 +72,7 @@ def continue_conversation(
     mode: str,
     highlighted_text: str | None,
     runtime_api_key: str | None,
+    selected_model: str | None,
 ) -> tuple[NodePayload, NodePayload, list[EdgePayload], str, list[TranscriptLine]]:
     graph = get_graph_or_404(db, graph_id)
     _lock_anchor_variant(
@@ -99,6 +100,7 @@ def continue_conversation(
         mode=mode,
         highlighted_text=highlighted_text,
         runtime_api_key=runtime_api_key,
+        selected_model=selected_model,
     )
     edges = _create_edges(db=db, graph=graph, continue_from_node_id=continue_from_node_id, user_node=user_node, assistant_node=assistant_node)
 
@@ -184,6 +186,7 @@ def _create_assistant_node(
     mode: str,
     highlighted_text: str | None,
     runtime_api_key: str | None,
+    selected_model: str | None,
 ) -> tuple[Node, str]:
     variants, source = generate_variants(
         transcript=transcript,
@@ -191,6 +194,7 @@ def _create_assistant_node(
         mode=mode,
         highlighted_text=highlighted_text,
         runtime_api_key=runtime_api_key,
+        selected_model=selected_model,
     )
     ax, ay = assistant_position(parent_user_node.position_x, parent_user_node.position_y)
     assistant_node = Node(

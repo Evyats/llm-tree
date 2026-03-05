@@ -13,6 +13,7 @@ def continue_message(
     mode: str,
     highlighted_text: str | None,
     runtime_api_key: str | None,
+    selected_model: str | None,
 ) -> ContinueResponse:
     user_node, assistant_node, edges, source, transcript = continue_conversation(
         db=db,
@@ -23,6 +24,7 @@ def continue_message(
         mode=mode,
         highlighted_text=highlighted_text,
         runtime_api_key=runtime_api_key,
+        selected_model=selected_model,
     )
     return ContinueResponse(
         created_user_node=user_node,

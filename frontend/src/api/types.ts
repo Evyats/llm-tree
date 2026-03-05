@@ -11,6 +11,7 @@ export interface ContinueFromNodeRequest {
   user_text: string;
   mode: "normal" | "elaboration";
   highlighted_text?: string | null;
+  selected_model?: string | null;
 }
 
 export interface ContinueInPanelRequest {
@@ -18,4 +19,9 @@ export interface ContinueInPanelRequest {
   anchor_node_id: string;
   anchor_variant_index?: number | null;
   user_text: string;
+  selected_model?: string | null;
+}
+
+export interface AvailableModelsResponse {
+  models: string[];
 }

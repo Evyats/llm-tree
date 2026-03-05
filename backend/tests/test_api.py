@@ -102,6 +102,14 @@ def test_list_graphs_endpoint(client: TestClient) -> None:
     assert second in ids
 
 
+def test_models_endpoint_returns_list_shape(client: TestClient) -> None:
+    response = client.get("/api/models")
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload.keys()) == {"models"}
+    assert isinstance(payload["models"], list)
+
+
 def test_rename_and_delete_graph_endpoints(client: TestClient) -> None:
     graph_id = client.post("/api/graphs", json={"title": "Old"}).json()["graph_id"]
 

@@ -18,6 +18,7 @@ import {
   deleteNodeSubtree,
   extractNodePath,
   getGraph,
+  listAvailableModels,
   setSessionApiKey,
   updateVariant,
 } from "./api/client";
@@ -64,6 +65,7 @@ import {
   FIXED_TREE_GAP,
 } from "./features/layout/constants";
 import { buildFixedPositions } from "./features/layout/layoutEngine";
+import { DEFAULT_ROLE_SIZING, setNodeSizingRuntime } from "./features/layout/nodeSizing";
 import { useViewportControls } from "./features/layout/useViewportControls";
 import { useCollapsedBranches } from "./features/graph/useCollapsedBranches";
 import { useGraphStore, type NodeData } from "./store/useGraphStore";
@@ -84,6 +86,9 @@ const ASSISTANT_WHEEL_STEP_COOLDOWN_MS = 140;
 const NODE_ORIGIN_X = 0.5;
 const NODE_ORIGIN_Y = 0;
 const COLLAPSED_PREVIEW_TEXT_MAX = 42;
+const NODE_MAX_WIDTH_DEFAULT = 50;
+const NODE_MAX_WIDTH_UNIT_PX = 4;
+const NODE_MIN_WIDTH_DEFAULT = 150;
 
 export default function App() {
   const {
@@ -109,7 +114,10 @@ export default function App() {
   const [composerText, setComposerText] = useState("");
   const [panelText, setPanelText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [modelResponseLoading, setModelResponseLoading] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("fallback");
   const [elaborateAction, setElaborateAction] = useState<ElaborateAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
@@ -119,6 +127,10 @@ export default function App() {
   const [rowGap, setRowGap] = useState(FIXED_ROW_GAP);
   const [treeGap, setTreeGap] = useState(FIXED_TREE_GAP);
   const [siblingGap, setSiblingGap] = useState(FIXED_MIN_COL_GAP);
+  const [nodeMinWidth, setNodeMinWidth] = useState(NODE_MIN_WIDTH_DEFAULT);
+  const [nodeMaxWidth, setNodeMaxWidth] = useState(NODE_MAX_WIDTH_DEFAULT);
+  const [nodeStepChars, setNodeStepChars] = useState(DEFAULT_ROLE_SIZING.assistant.widthStepChars);
+  const [nodeStepPx, setNodeStepPx] = useState(DEFAULT_ROLE_SIZING.assistant.widthStepPx);
   const [assistantWheelHoldMs, setAssistantWheelHoldMs] = useState(DEFAULT_ASSISTANT_WHEEL_HOLD_MS);
   const [userEdgeType, setUserEdgeType] = useState<EdgeTypeValue>("default");
   const [assistantEdgeType, setAssistantEdgeType] = useState<EdgeTypeValue>("default");
@@ -127,6 +139,9 @@ export default function App() {
   const [userEdgeLineStyle, setUserEdgeLineStyle] = useState<EdgeLineStyleValue>("dashed");
   const [assistantEdgeLineStyle, setAssistantEdgeLineStyle] = useState<EdgeLineStyleValue>("solid");
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
+  const [layoutSliderTab, setLayoutSliderTab] = useState<
+    "spacing" | "sizing" | "view" | "userArrows" | "assistantArrows"
+  >("spacing");
   const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [panelAnchorNodeId, setPanelAnchorNodeId] = useState<string | null>(null);
@@ -144,11 +159,13 @@ export default function App() {
     collapseByEdge,
     unfoldSubtree,
   } = useCollapsedBranches();
-  const composerInputRef = useRef<HTMLInputElement>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+  const nodeSizingSignature = `${nodeMinWidth}-${nodeMaxWidth}-${nodeStepChars}-${nodeStepPx}`;
 
   const manualPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
   const wheelHoverStartRef = useRef<number>(0);
   const wheelHoverRafRef = useRef<number | null>(null);
   const wheelLastStepAtRef = useRef(0);
@@ -157,6 +174,10 @@ export default function App() {
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
+
+  useEffect(() => {
+    edgesRef.current = edges;
+  }, [edges]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -189,6 +210,36 @@ export default function App() {
     setNodeSizes(new Map());
     resetCollapsed();
   }, [graphId, resetCollapsed]);
+
+  useEffect(() => {
+    const maxWidthPx = nodeMaxWidth * NODE_MAX_WIDTH_UNIT_PX;
+    setNodeSizingRuntime({
+      assistant: {
+        minWidth: nodeMinWidth,
+        maxWidth: maxWidthPx,
+        widthStepChars: nodeStepChars,
+        widthStepPx: nodeStepPx,
+      },
+      user: {
+        minWidth: nodeMinWidth,
+        maxWidth: maxWidthPx,
+        widthStepChars: nodeStepChars,
+        widthStepPx: nodeStepPx,
+      },
+    });
+  }, [
+    nodeMaxWidth,
+    nodeMinWidth,
+    nodeStepChars,
+    nodeStepPx,
+  ]);
+
+  useEffect(() => {
+    const maxWidthPx = nodeMaxWidth * NODE_MAX_WIDTH_UNIT_PX;
+    if (nodeMinWidth > maxWidthPx) {
+      setNodeMaxWidth(Math.ceil(nodeMinWidth / NODE_MAX_WIDTH_UNIT_PX));
+    }
+  }, [nodeMaxWidth, nodeMinWidth]);
 
   useEffect(() => {
     for (const node of nodes) {
@@ -244,6 +295,7 @@ export default function App() {
     handleDeleteAllChats,
   } = useGraphSessions({
     graphId,
+    nodesCount: nodes.length,
     setGraph,
     setPanelOpen,
     setPanelAnchorNodeId,
@@ -265,6 +317,26 @@ export default function App() {
     fitCanvasToGraph,
     refreshGraphList,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadModels = async () => {
+      try {
+        const response = await listAvailableModels();
+        if (!cancelled) {
+          setAvailableModels(response.models ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setAvailableModels([]);
+        }
+      }
+    };
+    void loadModels();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -354,6 +426,20 @@ export default function App() {
     wheelLastStepAtRef.current = 0;
   }, []);
 
+  const approveVariant = useCallback(
+    (nodeId: string) => {
+      setNodes(
+        nodesRef.current.map((node) =>
+          node.id === nodeId ? { ...node, data: { ...node.data, variantLocked: true } } : node
+        )
+      );
+      if (wheelHoverNodeId === nodeId) {
+        clearAssistantWheelHover();
+      }
+    },
+    [clearAssistantWheelHover, setNodes, wheelHoverNodeId]
+  );
+
   const handleAssistantHoverStart = useCallback(
     (nodeId: string) => {
       setWheelHoverNodeId(nodeId);
@@ -436,8 +522,11 @@ export default function App() {
     panelAnchorNodeId,
     composerText,
     panelText,
+    selectedModel,
     nodes,
     edges,
+    getLatestNodes: () => nodesRef.current,
+    getLatestEdges: () => edgesRef.current,
     nodesById,
     refreshGraphList,
     setSelectedNode,
@@ -449,6 +538,7 @@ export default function App() {
     setNodes,
     setEdges,
     setLoading,
+    setModelResponseLoading,
     setError,
     clearElaborateAction: () => setElaborateAction(null),
   });
@@ -593,6 +683,20 @@ export default function App() {
   }, [fixedMode, reactFlowInstance, refreshMeasuredNodeSizes, nodes]);
 
   useEffect(() => {
+    if (!fixedMode || !reactFlowInstance) return;
+    const raf = requestAnimationFrame(() => {
+      refreshMeasuredNodeSizes();
+    });
+    const timeout = window.setTimeout(() => {
+      refreshMeasuredNodeSizes();
+    }, 120);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+    };
+  }, [fixedMode, nodeSizingSignature, reactFlowInstance, refreshMeasuredNodeSizes]);
+
+  useEffect(() => {
     if (!fixedMode || !layoutPanelOpen) {
       return;
     }
@@ -608,6 +712,16 @@ export default function App() {
   }, [fixedMode, layoutPanelOpen, updateLayoutPanelPosition]);
 
   const assistantWithBranch = useMemo(() => getAssistantNodesWithUserBranch(nodesById, edges), [edges, nodesById]);
+  const panelAnchorNode = panelAnchorNodeId ? nodesById.get(panelAnchorNodeId) : undefined;
+  const canCyclePanelAnchorVariant =
+    !!panelAnchorNode &&
+    panelAnchorNode.data.role === "assistant" &&
+    !!panelAnchorNode.data.variants &&
+    !panelAnchorNode.data.pending &&
+    !panelAnchorNode.data.variantLocked &&
+    !assistantWithBranch.has(panelAnchorNode.id);
+  const panelAnchorVariantIndex =
+    panelAnchorNode?.data.role === "assistant" ? panelAnchorNode.data.variantIndex ?? 0 : 0;
 
   useEffect(() => {
     if (!wheelHoverNodeId) return;
@@ -615,6 +729,7 @@ export default function App() {
     const nodeIsEligible =
       hoveredNode?.data.role === "assistant" &&
       !!hoveredNode.data.variants &&
+      !hoveredNode.data.variantLocked &&
       !assistantWithBranch.has(wheelHoverNodeId);
     if (!nodeIsEligible) {
       clearAssistantWheelHover();
@@ -629,6 +744,10 @@ export default function App() {
   }, [panelAnchorNodeId, panelOpen, setTranscript, nodes]);
 
   const hiddenNodeIds = useMemo(() => buildHiddenNodeIds(collapsedTargets, getSubtreeNodeIds), [collapsedTargets, getSubtreeNodeIds]);
+  const hasPendingAssistant = useMemo(
+    () => nodes.some((node) => node.data.role === "assistant" && node.data.pending === true),
+    [nodes]
+  );
   const collapsedProxyTargets = useMemo(
     () => buildCollapsedProxyTargets(collapsedTargets, hiddenNodeIds, nodesById),
     [collapsedTargets, hiddenNodeIds, nodesById]
@@ -659,6 +778,7 @@ export default function App() {
         .filter((node) => !hiddenNodeIds.has(node.id))
         .map((node) => ({
         ...node,
+        selected: node.id === selectedNodeId,
         type: collapsedVisibleSet.has(node.id) ? "collapsedNode" : node.type,
         position: fixedMode ? structure.positions.get(node.id) ?? node.position : node.position,
         data: {
@@ -673,10 +793,12 @@ export default function App() {
               }
             : {}),
           ...node.data,
+          sizingSignature: nodeSizingSignature,
           layer: structure.meta.get(node.id)?.layer ?? 0,
           siblingOrder: structure.meta.get(node.id)?.siblingOrder ?? 0,
-          variantLocked: assistantWithBranch.has(node.id),
+          variantLocked: assistantWithBranch.has(node.id) || node.data.variantLocked === true,
           onCycleVariant: cycleVariant,
+          onApproveVariant: approveVariant,
           onSelectElaboration: (nodeId: string, text: string, x: number, y: number) => {
             setElaborateAction({ nodeId, text, x, y });
           },
@@ -709,6 +831,7 @@ export default function App() {
           },
         } as NodeData & {
           onCycleVariant: (nodeId: string, direction: -1 | 1) => void;
+          onApproveVariant: (nodeId: string) => void;
           onSelectElaboration: (nodeId: string, text: string, x: number, y: number) => void;
           onOpenPanel: (nodeId: string) => void;
           panelActive: boolean;
@@ -725,6 +848,7 @@ export default function App() {
     },
     [
       assistantWithBranch,
+      approveVariant,
       collapsedProxyTargets,
       cycleVariant,
       fixedMode,
@@ -736,8 +860,10 @@ export default function App() {
       nodes,
       panelAnchorNodeId,
       panelOpen,
+      nodeSizingSignature,
       setPanelOpen,
       setSelectedNode,
+      selectedNodeId,
       setTranscript,
       structure,
       unfoldSubtree,
@@ -767,6 +893,22 @@ export default function App() {
     assistantEdgeLineStyle,
   ]);
 
+  const applyFoldForEdge = useCallback(
+    (edge: Edge): boolean => {
+      const foldResolution = resolveFoldEdge(edge, nodesById, hiddenNodeIds);
+      if (!foldResolution) {
+        return false;
+      }
+      if (collapsedTargets.has(foldResolution.targetId)) {
+        unfoldSubtree(getSubtreeNodeIds(foldResolution.targetId));
+        return true;
+      }
+      collapseByEdge(foldResolution.targetId, foldResolution.sourceId);
+      return true;
+    },
+    [collapseByEdge, collapsedTargets, getSubtreeNodeIds, hiddenNodeIds, nodesById, unfoldSubtree]
+  );
+
   const desktopGridCols = panelOpen ? "md:grid-cols-[16rem_minmax(0,1fr)_420px]" : "md:grid-cols-[16rem_minmax(0,1fr)]";
 
   return (
@@ -786,6 +928,9 @@ export default function App() {
             void setSessionApiKey(apiKeyInput.trim());
             setApiKeyInput("");
           }}
+          modelOptions={availableModels}
+          selectedModel={selectedModel}
+          onSelectedModelChange={setSelectedModel}
           onNewChat={() => void startNewChat()}
           onToggleHistory={() => setMobileHistoryOpen(true)}
         />
@@ -827,7 +972,7 @@ export default function App() {
       <main ref={mainRef} className="relative min-h-0 row-start-2 md:col-start-2 md:row-start-2">
         {fixedMode && layoutPanelOpen && (
           <div
-            className="absolute z-[1000] w-[36rem] max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-lg border border-stone-300 bg-paper/95 p-2 backdrop-blur pointer-events-auto"
+            className="absolute z-[1000] w-[18rem] max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-lg border border-stone-300 bg-paper/95 p-2 backdrop-blur pointer-events-auto"
             style={{ left: layoutPanelPosition.left, top: layoutPanelPosition.top }}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
@@ -849,196 +994,325 @@ export default function App() {
               </button>
             </div>
             <div className="mb-2 text-[10px] text-stone-500">Double-click any slider to reset to default.</div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
               <div className="space-y-2">
-                <label className="block text-[11px] text-stone-700">
-                  Row gap: <span className="font-semibold">{rowGap}</span>
-                  <input
-                    className="mt-1 w-full"
-                    type="range"
-                    min={0}
-                    max={120}
-                    step={1}
-                    value={rowGap}
-                    onChange={(event) => setRowGap(Number(event.target.value))}
-                    onDoubleClick={() => setRowGap(FIXED_ROW_GAP)}
-                    title="Double-click to reset"
-                  />
-                </label>
-                <label className="block text-[11px] text-stone-700">
-                  Sibling gap: <span className="font-semibold">{siblingGap}</span>
-                  <input
-                    className="mt-1 w-full"
-                    type="range"
-                    min={0}
-                    max={160}
-                    step={1}
-                    value={siblingGap}
-                    onChange={(event) => setSiblingGap(Number(event.target.value))}
-                    onDoubleClick={() => setSiblingGap(FIXED_MIN_COL_GAP)}
-                    title="Double-click to reset"
-                  />
-                </label>
-                <label className="block text-[11px] text-stone-700">
-                  Fit padding: <span className="font-semibold">{fitViewPadding.toFixed(2)}</span>
-                  <input
-                    className="mt-1 w-full"
-                    type="range"
-                    min={0}
-                    max={1.2}
-                    step={0.02}
-                    value={fitViewPadding}
-                    onChange={(event) => setFitViewPadding(Number(event.target.value))}
-                    onDoubleClick={() => setFitViewPadding(DEFAULT_FIT_VIEW_BUTTON_PADDING)}
-                    title="Double-click to reset"
-                  />
-                </label>
-                <label className="block text-[11px] text-stone-700">
-                  Wheel hold (s): <span className="font-semibold">{(assistantWheelHoldMs / 1000).toFixed(1)}</span>
-                  <input
-                    className="mt-1 w-full"
-                    type="range"
-                    min={0}
-                    max={5000}
-                    step={100}
-                    value={assistantWheelHoldMs}
-                    onChange={(event) => setAssistantWheelHoldMs(Number(event.target.value))}
-                    onDoubleClick={() => setAssistantWheelHoldMs(DEFAULT_ASSISTANT_WHEEL_HOLD_MS)}
-                    title="Double-click to reset"
-                  />
-                </label>
-                <label className="block text-[11px] text-stone-700">
-                  Tree gap: <span className="font-semibold">{treeGap}</span>
-                  <input
-                    className="mt-1 w-full"
-                    type="range"
-                    min={20}
-                    max={420}
-                    step={2}
-                    value={treeGap}
-                    onChange={(event) => setTreeGap(Number(event.target.value))}
-                    onDoubleClick={() => setTreeGap(FIXED_TREE_GAP)}
-                    title="Double-click to reset"
-                  />
-                </label>
+                <div className="flex flex-wrap items-center gap-1 rounded bg-stone-100 p-1">
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-[11px] ${
+                      layoutSliderTab === "spacing"
+                        ? "bg-white text-accent shadow-sm"
+                        : "text-stone-700 hover:bg-stone-200"
+                    }`}
+                    onClick={() => setLayoutSliderTab("spacing")}
+                  >
+                    Spacing
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-[11px] ${
+                      layoutSliderTab === "sizing"
+                        ? "bg-white text-accent shadow-sm"
+                        : "text-stone-700 hover:bg-stone-200"
+                    }`}
+                    onClick={() => setLayoutSliderTab("sizing")}
+                  >
+                    Node Sizing
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-[11px] ${
+                      layoutSliderTab === "view"
+                        ? "bg-white text-accent shadow-sm"
+                        : "text-stone-700 hover:bg-stone-200"
+                    }`}
+                    onClick={() => setLayoutSliderTab("view")}
+                  >
+                    View
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-[11px] ${
+                      layoutSliderTab === "userArrows"
+                        ? "bg-white text-accent shadow-sm"
+                        : "text-stone-700 hover:bg-stone-200"
+                    }`}
+                    onClick={() => setLayoutSliderTab("userArrows")}
+                  >
+                    User Arrows
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-[11px] ${
+                      layoutSliderTab === "assistantArrows"
+                        ? "bg-white text-accent shadow-sm"
+                        : "text-stone-700 hover:bg-stone-200"
+                    }`}
+                    onClick={() => setLayoutSliderTab("assistantArrows")}
+                  >
+                    Assistant Arrows
+                  </button>
+                </div>
+                {layoutSliderTab === "spacing" && (
+                  <>
+                    <label className="block text-[11px] text-stone-700">
+                      Row gap: <span className="font-semibold">{rowGap}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={0}
+                        max={120}
+                        step={1}
+                        value={rowGap}
+                        onChange={(event) => setRowGap(Number(event.target.value))}
+                        onDoubleClick={() => setRowGap(FIXED_ROW_GAP)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-stone-700">
+                      Sibling gap: <span className="font-semibold">{siblingGap}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={0}
+                        max={160}
+                        step={1}
+                        value={siblingGap}
+                        onChange={(event) => setSiblingGap(Number(event.target.value))}
+                        onDoubleClick={() => setSiblingGap(FIXED_MIN_COL_GAP)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-stone-700">
+                      Tree gap: <span className="font-semibold">{treeGap}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={20}
+                        max={420}
+                        step={2}
+                        value={treeGap}
+                        onChange={(event) => setTreeGap(Number(event.target.value))}
+                        onDoubleClick={() => setTreeGap(FIXED_TREE_GAP)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                  </>
+                )}
+                {layoutSliderTab === "view" && (
+                  <>
+                    <label className="block text-[11px] text-stone-700">
+                      Fit padding: <span className="font-semibold">{fitViewPadding.toFixed(2)}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={0}
+                        max={1.2}
+                        step={0.02}
+                        value={fitViewPadding}
+                        onChange={(event) => setFitViewPadding(Number(event.target.value))}
+                        onDoubleClick={() => setFitViewPadding(DEFAULT_FIT_VIEW_BUTTON_PADDING)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-stone-700">
+                      Wheel hold (s): <span className="font-semibold">{(assistantWheelHoldMs / 1000).toFixed(1)}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={0}
+                        max={5000}
+                        step={100}
+                        value={assistantWheelHoldMs}
+                        onChange={(event) => setAssistantWheelHoldMs(Number(event.target.value))}
+                        onDoubleClick={() => setAssistantWheelHoldMs(DEFAULT_ASSISTANT_WHEEL_HOLD_MS)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                  </>
+                )}
+                {layoutSliderTab === "sizing" && (
+                  <>
+                    <label className="block text-[11px] text-stone-700">
+                      Min width: <span className="font-semibold">{nodeMinWidth}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={150}
+                        max={600}
+                        step={5}
+                        value={nodeMinWidth}
+                        onChange={(event) => setNodeMinWidth(Number(event.target.value))}
+                        onDoubleClick={() => setNodeMinWidth(NODE_MIN_WIDTH_DEFAULT)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-stone-700">
+                      Max width:{" "}
+                      <span className="font-semibold">
+                        {nodeMaxWidth} ({nodeMaxWidth * NODE_MAX_WIDTH_UNIT_PX}px)
+                      </span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={20}
+                        max={120}
+                        step={1}
+                        value={nodeMaxWidth}
+                        onChange={(event) => setNodeMaxWidth(Number(event.target.value))}
+                        onDoubleClick={() => setNodeMaxWidth(NODE_MAX_WIDTH_DEFAULT)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-stone-700">
+                      Width step chars: <span className="font-semibold">{nodeStepChars}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={1}
+                        max={20}
+                        step={1}
+                        value={nodeStepChars}
+                        onChange={(event) => setNodeStepChars(Number(event.target.value))}
+                        onDoubleClick={() => setNodeStepChars(DEFAULT_ROLE_SIZING.assistant.widthStepChars)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-stone-700">
+                      Width step px: <span className="font-semibold">{nodeStepPx}</span>
+                      <input
+                        className="mt-1 w-full"
+                        type="range"
+                        min={1}
+                        max={24}
+                        step={1}
+                        value={nodeStepPx}
+                        onChange={(event) => setNodeStepPx(Number(event.target.value))}
+                        onDoubleClick={() => setNodeStepPx(DEFAULT_ROLE_SIZING.assistant.widthStepPx)}
+                        title="Double-click to reset"
+                      />
+                    </label>
+                  </>
+                )}
+                {layoutSliderTab === "userArrows" && (
+                  <div className="space-y-2">
+                    <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">User Outgoing Arrows</div>
+                    <div className="mb-1 text-[10px] text-stone-500">Type</div>
+                    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                      {EDGE_TYPE_OPTIONS.map((option) => (
+                        <button
+                          key={`user-type-${option.value}`}
+                          type="button"
+                          className={`rounded px-2 py-1 ${
+                            userEdgeType === option.value
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                          }`}
+                          onClick={() => setUserEdgeType(option.value)}
+                          title={option.label}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mb-1 text-[10px] text-stone-500">Motion</div>
+                    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                      {EDGE_MOTION_OPTIONS.map((option) => (
+                        <button
+                          key={`user-motion-${option.value}`}
+                          type="button"
+                          className={`rounded px-2 py-1 ${
+                            userEdgeMotion === option.value
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                          }`}
+                          onClick={() => setUserEdgeMotion(option.value)}
+                          title={option.label}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mb-1 text-[10px] text-stone-500">Line Style</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {EDGE_LINE_STYLE_OPTIONS.map((option) => (
+                        <button
+                          key={`user-line-${option.value}`}
+                          type="button"
+                          className={`rounded px-2 py-1 ${
+                            userEdgeLineStyle === option.value
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                          }`}
+                          onClick={() => setUserEdgeLineStyle(option.value)}
+                          title={option.label}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {layoutSliderTab === "assistantArrows" && (
+                  <div className="space-y-2">
+                    <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">Assistant Outgoing Arrows</div>
+                    <div className="mb-1 text-[10px] text-stone-500">Type</div>
+                    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                      {EDGE_TYPE_OPTIONS.map((option) => (
+                        <button
+                          key={`assistant-type-${option.value}`}
+                          type="button"
+                          className={`rounded px-2 py-1 ${
+                            assistantEdgeType === option.value
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                          }`}
+                          onClick={() => setAssistantEdgeType(option.value)}
+                          title={option.label}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mb-1 text-[10px] text-stone-500">Motion</div>
+                    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                      {EDGE_MOTION_OPTIONS.map((option) => (
+                        <button
+                          key={`assistant-motion-${option.value}`}
+                          type="button"
+                          className={`rounded px-2 py-1 ${
+                            assistantEdgeMotion === option.value
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                          }`}
+                          onClick={() => setAssistantEdgeMotion(option.value)}
+                          title={option.label}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mb-1 text-[10px] text-stone-500">Line Style</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {EDGE_LINE_STYLE_OPTIONS.map((option) => (
+                        <button
+                          key={`assistant-line-${option.value}`}
+                          type="button"
+                          className={`rounded px-2 py-1 ${
+                            assistantEdgeLineStyle === option.value
+                              ? "bg-accent/20 text-accent border border-accent/40"
+                              : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
+                          }`}
+                          onClick={() => setAssistantEdgeLineStyle(option.value)}
+                          title={option.label}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="space-y-3 text-[11px] text-stone-700">
-              <div>
-                <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">User Outgoing Arrows</div>
-                <div className="mb-1 text-[10px] text-stone-500">Type</div>
-                <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                  {EDGE_TYPE_OPTIONS.map((option) => (
-                    <button
-                      key={`user-type-${option.value}`}
-                      type="button"
-                      className={`rounded px-2 py-1 ${
-                        userEdgeType === option.value
-                          ? "bg-accent/20 text-accent border border-accent/40"
-                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
-                      }`}
-                      onClick={() => setUserEdgeType(option.value)}
-                      title={option.label}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mb-1 text-[10px] text-stone-500">Motion</div>
-                <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                  {EDGE_MOTION_OPTIONS.map((option) => (
-                    <button
-                      key={`user-motion-${option.value}`}
-                      type="button"
-                      className={`rounded px-2 py-1 ${
-                        userEdgeMotion === option.value
-                          ? "bg-accent/20 text-accent border border-accent/40"
-                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
-                      }`}
-                      onClick={() => setUserEdgeMotion(option.value)}
-                      title={option.label}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mb-1 text-[10px] text-stone-500">Line Style</div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {EDGE_LINE_STYLE_OPTIONS.map((option) => (
-                    <button
-                      key={`user-line-${option.value}`}
-                      type="button"
-                      className={`rounded px-2 py-1 ${
-                        userEdgeLineStyle === option.value
-                          ? "bg-accent/20 text-accent border border-accent/40"
-                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
-                      }`}
-                      onClick={() => setUserEdgeLineStyle(option.value)}
-                      title={option.label}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">Assistant Outgoing Arrows</div>
-                <div className="mb-1 text-[10px] text-stone-500">Type</div>
-                <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                  {EDGE_TYPE_OPTIONS.map((option) => (
-                    <button
-                      key={`assistant-type-${option.value}`}
-                      type="button"
-                      className={`rounded px-2 py-1 ${
-                        assistantEdgeType === option.value
-                          ? "bg-accent/20 text-accent border border-accent/40"
-                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
-                      }`}
-                      onClick={() => setAssistantEdgeType(option.value)}
-                      title={option.label}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mb-1 text-[10px] text-stone-500">Motion</div>
-                <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                  {EDGE_MOTION_OPTIONS.map((option) => (
-                    <button
-                      key={`assistant-motion-${option.value}`}
-                      type="button"
-                      className={`rounded px-2 py-1 ${
-                        assistantEdgeMotion === option.value
-                          ? "bg-accent/20 text-accent border border-accent/40"
-                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
-                      }`}
-                      onClick={() => setAssistantEdgeMotion(option.value)}
-                      title={option.label}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mb-1 text-[10px] text-stone-500">Line Style</div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {EDGE_LINE_STYLE_OPTIONS.map((option) => (
-                    <button
-                      key={`assistant-line-${option.value}`}
-                      type="button"
-                      className={`rounded px-2 py-1 ${
-                        assistantEdgeLineStyle === option.value
-                          ? "bg-accent/20 text-accent border border-accent/40"
-                          : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
-                      }`}
-                      onClick={() => setAssistantEdgeLineStyle(option.value)}
-                      title={option.label}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
             </div>
           </div>
         )}
@@ -1050,17 +1324,11 @@ export default function App() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onEdgeClick={(event, edge) => {
-              const foldResolution = resolveFoldEdge(edge, nodesById, hiddenNodeIds);
-              if (!foldResolution) {
+              if (!applyFoldForEdge(edge)) {
                 return;
               }
               event.preventDefault();
               event.stopPropagation();
-              if (collapsedTargets.has(foldResolution.targetId)) {
-                unfoldSubtree(getSubtreeNodeIds(foldResolution.targetId));
-                return;
-              }
-              collapseByEdge(foldResolution.targetId, foldResolution.sourceId);
             }}
             onNodeClick={(event, node) => {
               if ("button" in event && event.button !== 0) {
@@ -1072,9 +1340,19 @@ export default function App() {
               setSelectedNode(node.id);
               setNodeContextMenuNodeId(null);
             }}
-            onNodeDoubleClick={(event) => {
+            onNodeDoubleClick={(event, node) => {
               event.preventDefault();
               event.stopPropagation();
+              if (node.type === "collapsedNode") {
+                return;
+              }
+              const outgoingEdges = uiEdges.filter((edge) => edge.source === node.id);
+              if (outgoingEdges.length === 0) {
+                return;
+              }
+              for (const edge of outgoingEdges) {
+                applyFoldForEdge(edge);
+              }
             }}
             onPaneClick={() => {
               setNodeContextMenuNodeId(null);
@@ -1164,6 +1442,12 @@ export default function App() {
             open={panelOpen}
             transcript={transcript}
             panelText={panelText}
+            canCycleLastAssistantVariant={canCyclePanelAnchorVariant}
+            lastAssistantVariantIndex={panelAnchorVariantIndex}
+            onCycleLastAssistantVariant={(direction) => {
+              if (!panelAnchorNodeId) return;
+              void cycleVariant(panelAnchorNodeId, direction);
+            }}
             onClose={() => {
               setPanelOpen(false);
               setPanelAnchorNodeId(null);
@@ -1190,6 +1474,12 @@ export default function App() {
               open={panelOpen}
               transcript={transcript}
               panelText={panelText}
+              canCycleLastAssistantVariant={canCyclePanelAnchorVariant}
+              lastAssistantVariantIndex={panelAnchorVariantIndex}
+              onCycleLastAssistantVariant={(direction) => {
+                if (!panelAnchorNodeId) return;
+                void cycleVariant(panelAnchorNodeId, direction);
+              }}
               onClose={() => {
                 setPanelOpen(false);
                 setPanelAnchorNodeId(null);
@@ -1204,6 +1494,25 @@ export default function App() {
       <ElaborateButton
         action={elaborateAction}
         onElaborateClick={(action) => {
+          const state = useGraphStore.getState();
+          const nextNodes = state.nodes.map((node) => {
+              if (node.id !== action.nodeId) {
+                return node;
+              }
+              const existing = node.data.elaboratedSelections ?? [];
+              if (existing.includes(action.text)) {
+                return node;
+              }
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  elaboratedSelections: [...existing, action.text],
+                },
+              };
+            });
+          state.setNodes(nextNodes);
+          nodesRef.current = nextNodes;
           setSelectedNode(action.nodeId);
           void sendContinue("elaboration", action.text);
         }}
@@ -1239,7 +1548,18 @@ export default function App() {
         />
       </div>
 
-      {loading && <div className="pointer-events-none absolute inset-0 z-10 bg-white/20" />}
+      {modelResponseLoading && hasPendingAssistant && (
+        <div className="pointer-events-none absolute left-1/2 top-14 z-[1400] w-72 -translate-x-1/2 rounded-md border border-stone-300 bg-paper/95 px-3 py-2 shadow-float backdrop-blur">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-700">
+            Waiting For Model Response
+          </div>
+          <div className="flex items-center gap-1.5 text-stone-600">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-accent/70 [animation-delay:0ms]" />
+            <span className="h-2 w-2 animate-pulse rounded-full bg-accent/70 [animation-delay:120ms]" />
+            <span className="h-2 w-2 animate-pulse rounded-full bg-accent/70 [animation-delay:240ms]" />
+          </div>
+        </div>
+      )}
       {error && <div className="absolute bottom-14 left-3 z-30 rounded bg-red-100 px-3 py-2 text-xs text-red-800">{error}</div>}
     </div>
   );

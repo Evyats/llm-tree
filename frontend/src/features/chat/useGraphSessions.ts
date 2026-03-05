@@ -14,6 +14,7 @@ import { GRAPH_STORAGE_KEY } from "../layout/constants";
 
 interface UseGraphSessionsParams {
   graphId: string | null;
+  nodesCount: number;
   setGraph: (graphId: string, title: string, nodes: any[], edges: any[]) => void;
   setPanelOpen: (open: boolean) => void;
   setPanelAnchorNodeId: (nodeId: string | null) => void;
@@ -30,6 +31,7 @@ interface UseGraphSessionsParams {
 
 export function useGraphSessions({
   graphId,
+  nodesCount,
   setGraph,
   setPanelOpen,
   setPanelAnchorNodeId,
@@ -44,6 +46,26 @@ export function useGraphSessions({
   fitCanvasToGraph,
 }: UseGraphSessionsParams) {
   const [previousChats, setPreviousChats] = useState<ChatSummary[]>([]);
+
+  const findReusableEmptyGraphId = useCallback(async (): Promise<string | null> => {
+    if (graphId && nodesCount === 0) {
+      return graphId;
+    }
+    const candidates = previousChats
+      .filter((chat) => chat.graph_id !== graphId)
+      .map((chat) => chat.graph_id);
+    for (const candidateId of candidates) {
+      try {
+        const graph = await getGraph(candidateId);
+        if (graph.nodes.length === 0) {
+          return candidateId;
+        }
+      } catch {
+        // ignore candidate fetch failures and continue
+      }
+    }
+    return null;
+  }, [graphId, nodesCount, previousChats]);
 
   const refreshGraphList = useCallback(async () => {
     try {
@@ -72,10 +94,15 @@ export function useGraphSessions({
     try {
       setLoading(true);
       setError(null);
-      const created = await createGraph("Chat Tree");
-      localStorage.setItem(GRAPH_STORAGE_KEY, created.graph_id);
-      const graph = await getGraph(created.graph_id);
-      setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
+      const reusableEmptyGraphId = await findReusableEmptyGraphId();
+      if (reusableEmptyGraphId) {
+        await loadGraph(reusableEmptyGraphId);
+      } else {
+        const created = await createGraph("Chat Tree");
+        localStorage.setItem(GRAPH_STORAGE_KEY, created.graph_id);
+        const graph = await getGraph(created.graph_id);
+        setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
+      }
       fitCanvasToGraph();
       setComposerText("");
       setPanelText("");
@@ -91,7 +118,9 @@ export function useGraphSessions({
       setLoading(false);
     }
   }, [
+    findReusableEmptyGraphId,
     fitCanvasToGraph,
+    loadGraph,
     refreshGraphList,
     setComposerText,
     setElaborateAction,

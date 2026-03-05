@@ -16,6 +16,7 @@ export function nodePayloadToFlowNode(node: GraphNodePayload): Node<NodeData> {
       variantIndex: node.variant_index,
       mode: node.mode,
       highlightedText: node.highlighted_text,
+      elaboratedSelections: [],
     },
   };
 }

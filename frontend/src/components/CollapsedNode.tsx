@@ -16,6 +16,11 @@ const ACTION_RAIL_EXPANDED_WIDTH = 44;
 function CollapsedNode({ id, data, selected }: NodeProps<CollapsedNodeData>) {
   return (
     <div
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        data.onUnfold();
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();

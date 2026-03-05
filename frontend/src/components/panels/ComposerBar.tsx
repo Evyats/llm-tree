@@ -1,11 +1,11 @@
-import type { RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 interface ComposerBarProps {
   selectedNodeId: string | null;
   showFullSelectedNodeId: boolean;
   composerText: string;
   loading: boolean;
-  inputRef?: RefObject<HTMLInputElement>;
+  inputRef?: RefObject<HTMLTextAreaElement>;
   onToggleSelectedNodeIdMode: () => void;
   onComposerTextChange: (value: string) => void;
   onSend: () => void;
@@ -21,6 +21,16 @@ export default function ComposerBar({
   onComposerTextChange,
   onSend,
 }: ComposerBarProps) {
+  const localInputRef = useRef<HTMLTextAreaElement>(null);
+  const resolvedRef = inputRef ?? localInputRef;
+
+  useEffect(() => {
+    const target = resolvedRef.current;
+    if (!target) return;
+    target.style.height = "0px";
+    target.style.height = `${target.scrollHeight}px`;
+  }, [composerText, resolvedRef]);
+
   const selectedLabel = selectedNodeId
     ? showFullSelectedNodeId
       ? selectedNodeId
@@ -43,9 +53,10 @@ export default function ComposerBar({
           </button>
         )}
       </div>
-      <input
-        ref={inputRef}
-        className="flex-1 rounded border border-stone-300 px-3 py-2 text-sm"
+      <textarea
+        ref={resolvedRef}
+        rows={1}
+        className="max-h-40 min-h-[2.5rem] flex-1 resize-none overflow-y-auto rounded border border-stone-300 px-3 py-2 text-sm leading-5"
         placeholder="Write a message for the selected node branch..."
         value={composerText}
         onChange={(event) => onComposerTextChange(event.target.value)}

@@ -1,12 +1,15 @@
-import { memo, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { memo, useRef, type MouseEvent, type PointerEvent } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
+import { estimateNodeFrame } from "../features/layout/nodeSizing";
 import { normalizeSelectionToWordBoundaries } from "../features/selection/normalizeSelection";
 import type { NodeData } from "../store/useGraphStore";
 import NodeActionButton from "./common/NodeActionButton";
+import MarkdownPreview from "./common/MarkdownPreview";
 
 interface AssistantNodeData extends NodeData {
   onCycleVariant?: (nodeId: string, direction: -1 | 1) => void;
+  onApproveVariant?: (nodeId: string) => void;
   onSelectElaboration?: (nodeId: string, text: string, x: number, y: number) => void;
   onOpenPanel?: (nodeId: string) => void;
   panelActive?: boolean;
@@ -19,42 +22,18 @@ interface AssistantNodeData extends NodeData {
   onToggleContextMenu?: (nodeId: string) => void;
 }
 
-const assistantNodeSizeCache = new Map<string, { w: number; h: number }>();
-
-function estimateAssistantFrameSize(text: string) {
-  const textLen = text.length;
-  const width = Math.min(700, Math.max(240, 220 + textLen * 5.2));
-  const lines = Math.max(1, Math.ceil(textLen / 56));
-  const height = Math.min(680, Math.max(110, 92 + lines * 22));
-  return { w: width, h: height };
-}
-
 const ACTION_RAIL_EXPANDED_WIDTH = 44;
 
 function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
-  const measureRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLParagraphElement>(null);
-  const cacheKey = `${id}:${data.text}`;
-  const [size, setSize] = useState(() => assistantNodeSizeCache.get(cacheKey) ?? estimateAssistantFrameSize(data.text));
+  const contentRef = useRef<HTMLDivElement>(null);
   const wheelEligible = !data.variantLocked && !!data.variants;
   const canCycleVariants = !data.pending && !data.variantLocked && !!data.variants;
-  const contentWidth = Math.max(190, size.w - 32);
-
-  useLayoutEffect(() => {
-    const cached = assistantNodeSizeCache.get(cacheKey);
-    if (cached) {
-      setSize(cached);
-      return;
-    }
-    if (!measureRef.current) {
-      return;
-    }
-    const nextW = Math.min(700, Math.max(240, measureRef.current.scrollWidth + 36));
-    const nextH = Math.min(680, Math.max(110, measureRef.current.scrollHeight + 62));
-    const measured = { w: nextW, h: nextH };
-    assistantNodeSizeCache.set(cacheKey, measured);
-    setSize(measured);
-  }, [cacheKey]);
+  const minControlsContentWidth = canCycleVariants ? 300 : 120;
+  const size = estimateNodeFrame("assistant", data.text, {
+    forceMinContentWidth: minControlsContentWidth,
+    extraMinWidth: canCycleVariants ? 180 : 0,
+  });
+  const contentWidth = Math.max(minControlsContentWidth, size.contentWidth);
 
   const handleMouseUp = (event: MouseEvent) => {
     if (event.button !== 0) {
@@ -101,7 +80,6 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
           event.stopPropagation();
         }
       }}
-      onDoubleClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -111,16 +89,16 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
         selected ? "border-accent" : "border-stone-300"
       }`}
       style={{
-        width: size.w + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0),
-        height: size.h,
-        transition: "width 260ms ease, height 260ms ease, border-color 200ms ease",
+        width: size.width + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0),
+        minHeight: size.minHeight,
+        transition: "width 260ms ease, border-color 200ms ease",
       }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-      <div className="flex h-full items-stretch gap-3">
+      <div className="flex items-stretch gap-3">
         <div className="min-w-0 flex-none" style={{ width: contentWidth }}>
-          <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="mb-2 flex items-center gap-2">
             <div className="flex items-center gap-2">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-accent">Assistant</div>
               {canCycleVariants && (
@@ -147,18 +125,30 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
                       <path d="M5 8L10 13L15 8" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </NodeActionButton>
+                  <NodeActionButton
+                    className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+                    onClick={() => {
+                      data.onApproveVariant?.(id);
+                    }}
+                    ariaLabel="Approve current variant"
+                    title="Approve current variant"
+                  >
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 10l4 4 8-8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </NodeActionButton>
                 </>
               )}
             </div>
-            {canCycleVariants && (
-              <div className="h-1.5 w-20 overflow-hidden rounded-full bg-stone-200" aria-hidden>
-                <div
-                  className="h-full rounded-full bg-accent transition-all duration-200"
-                  style={{ width: `${((data.variantIndex + 1) / 3) * 100}%` }}
-                />
-              </div>
-            )}
             <div className="flex items-center gap-2">
+              {canCycleVariants && (
+                <div className="h-1.5 w-10 overflow-hidden rounded-full bg-stone-200" aria-hidden>
+                  <div
+                    className="h-full rounded-full bg-accent transition-all duration-200"
+                    style={{ width: `${((data.variantIndex + 1) / 3) * 100}%` }}
+                  />
+                </div>
+              )}
               <NodeActionButton
                 className={`rounded px-2 py-1 text-xs text-white ${
                   data.panelActive
@@ -178,7 +168,7 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
               </NodeActionButton>
             </div>
           </div>
-          <p
+          <div
             ref={contentRef}
             onMouseDown={(event) => {
               if (event.button === 0) {
@@ -191,7 +181,7 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
               }
             }}
             onMouseUp={handleMouseUp}
-            className="nodrag nopan cursor-text select-text whitespace-pre-wrap text-sm leading-relaxed text-ink"
+            className="nodrag nopan cursor-text select-text text-sm leading-relaxed text-ink"
           >
             {data.pending ? (
               <span className="inline-flex items-center gap-1.5 text-stone-500" aria-label="Generating response">
@@ -200,9 +190,9 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
                 <span className="h-2 w-2 animate-pulse rounded-full bg-accent/70 [animation-delay:240ms]" />
               </span>
             ) : (
-              data.text
+              <MarkdownPreview text={data.text} highlights={data.elaboratedSelections} />
             )}
-          </p>
+          </div>
         </div>
         {data.contextMenuOpen && (
           <div className="flex w-fit flex-col justify-start gap-2 border-l border-stone-300 pl-2.5 pt-0.5">
@@ -246,15 +236,6 @@ function AssistantNode({ id, data, selected }: NodeProps<AssistantNodeData>) {
             </button>
           </div>
         )}
-      </div>
-      <div className="pointer-events-none absolute -z-10 opacity-0">
-        <p
-          ref={measureRef}
-          className="inline-block whitespace-pre-wrap text-sm leading-relaxed"
-          style={{ width: "fit-content", maxWidth: "660px" }}
-        >
-          {data.text}
-        </p>
       </div>
     </div>
   );

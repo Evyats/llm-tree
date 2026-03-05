@@ -1,5 +1,6 @@
 import type { Node } from "reactflow";
 
+import { estimateNodeFrame } from "./nodeSizing";
 import type { NodeData } from "../../store/useGraphStore";
 import {
   FIXED_MIN_COL_GAP,
@@ -169,17 +170,13 @@ function buildStructureMeta(nodes: Node<NodeData>[]) {
 }
 
 export function estimateNodeSize(node: Node<NodeData>): NodeSize {
-  const textLen = node.data.text?.length ?? 0;
-  if (node.data.role === "assistant") {
-    const width = Math.min(880, Math.max(280, 220 + textLen * 5.2));
-    const lines = Math.max(1, Math.ceil(textLen / 56));
-    const height = Math.min(680, Math.max(130, 92 + lines * 22));
-    return { width, height };
-  }
-  const width = Math.min(520, Math.max(200, 190 + textLen * 0.28));
-  const lines = Math.max(1, Math.ceil(textLen / 44));
-  const height = Math.max(86, 64 + lines * 22);
-  return { width, height };
+  const canCycleVariants =
+    node.data.role === "assistant" && !!node.data.variants && !node.data.variantLocked && !node.data.pending;
+  const frame = estimateNodeFrame(node.data.role, node.data.text ?? "", {
+    forceMinContentWidth: node.data.role === "assistant" ? (canCycleVariants ? 190 : 120) : 120,
+    extraMinWidth: canCycleVariants ? 70 : 0,
+  });
+  return { width: frame.width, height: frame.estimatedHeight };
 }
 
 export function buildFixedPositions(

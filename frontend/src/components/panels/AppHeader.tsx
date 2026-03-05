@@ -5,6 +5,9 @@ interface AppHeaderProps {
   onApiKeyInputChange: (value: string) => void;
   onSaveApiKey: () => void;
   onNewChat: () => void;
+  modelOptions: string[];
+  selectedModel: string;
+  onSelectedModelChange: (value: string) => void;
   onToggleHistory?: () => void;
 }
 
@@ -15,6 +18,9 @@ export default function AppHeader({
   onApiKeyInputChange,
   onSaveApiKey,
   onNewChat,
+  modelOptions,
+  selectedModel,
+  onSelectedModelChange,
   onToggleHistory,
 }: AppHeaderProps) {
   return (
@@ -38,6 +44,19 @@ export default function AppHeader({
         <button className="rounded bg-stone-800 px-3 py-1 text-xs text-white" onClick={onNewChat} type="button">
           New Chat
         </button>
+        <select
+          className="min-w-0 rounded border border-stone-300 bg-white px-2 py-1 text-xs md:w-44"
+          value={selectedModel}
+          onChange={(event) => onSelectedModelChange(event.target.value)}
+          title="Response model"
+        >
+          <option value="fallback">Default (Fallback)</option>
+          {modelOptions.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
         <input
           className="min-w-0 flex-1 rounded border border-stone-300 px-2 py-1 text-xs md:w-64 md:flex-none"
           placeholder="Optional session OpenAI key"

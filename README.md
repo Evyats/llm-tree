@@ -14,7 +14,9 @@ If live model calls are unavailable, deterministic fallback responses are used.
    - `Copy-Item infra/.env.example infra/.env`
    - `Copy-Item backend/.env.example backend/.env`
    - `Copy-Item frontend/.env.example frontend/.env`
-2. Set `OPENAI_API_KEY` in `backend/.env` (optional if fallback-only).
+2. Configure models and key in `backend/.env`:
+   - `OPENAI_MODELS=gpt-5.2,gpt-4o-mini` (comma-separated list for live calls)
+   - `OPENAI_API_KEY=` (optional if fallback-only)
 3. Create backend virtual environment:
    - `cd backend`
    - `python -m venv .venv`

@@ -17,6 +17,8 @@ export interface NodeData {
   siblingOrder?: number;
   mode: string;
   highlightedText: string | null;
+  elaboratedSelections?: string[];
+  sizingSignature?: string;
 }
 
 interface GraphState {

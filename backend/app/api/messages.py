@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session_id
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.schemas.message import ContinueChatRequest, ContinueMessageRequest, ContinueResponse
 from app.services.errors import GraphNotFoundError
@@ -28,6 +29,7 @@ def continue_message_endpoint(
             mode=payload.mode,
             highlighted_text=payload.highlighted_text,
             runtime_api_key=runtime_key,
+            selected_model=payload.selected_model,
         )
     except GraphNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -50,6 +52,12 @@ def continue_chat_endpoint(
             mode="normal",
             highlighted_text=None,
             runtime_api_key=runtime_key,
+            selected_model=payload.selected_model,
         )
     except GraphNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/models")
+def list_models_endpoint() -> dict[str, list[str]]:
+    return {"models": get_settings().parsed_openai_models}

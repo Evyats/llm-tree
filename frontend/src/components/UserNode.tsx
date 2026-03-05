@@ -1,9 +1,11 @@
 import { memo, useRef, type MouseEvent, type PointerEvent } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
+import { estimateNodeFrame } from "../features/layout/nodeSizing";
 import { normalizeSelectionToWordBoundaries } from "../features/selection/normalizeSelection";
 import type { NodeData } from "../store/useGraphStore";
 import NodeActionButton from "./common/NodeActionButton";
+import MarkdownPreview from "./common/MarkdownPreview";
 
 interface UserNodeData extends NodeData {
   onOpenPanel?: (nodeId: string) => void;
@@ -18,9 +20,10 @@ interface UserNodeData extends NodeData {
 const ACTION_RAIL_EXPANDED_WIDTH = 44;
 
 function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
-  const contentRef = useRef<HTMLParagraphElement>(null);
-  const baseWidth = Math.min(520, 190 + data.text.length * 0.28);
-  const contentWidth = Math.max(160, baseWidth - 32);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const size = estimateNodeFrame("user", data.text);
+  const baseWidth = size.width;
+  const contentWidth = size.contentWidth;
 
   const handleMouseUp = (event: MouseEvent) => {
     if (event.button !== 0) {
@@ -51,7 +54,6 @@ function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
 
   return (
     <div
-      onDoubleClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -62,6 +64,7 @@ function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
       }`}
       style={{
         width: baseWidth + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0),
+        minHeight: size.minHeight,
         transition: "width 260ms ease, border-color 200ms ease",
       }}
     >
@@ -89,7 +92,7 @@ function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
               </svg>
             </NodeActionButton>
           </div>
-          <p
+          <div
             ref={contentRef}
             onMouseDown={(event) => {
               if (event.button === 0) {
@@ -102,10 +105,10 @@ function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
               }
             }}
             onMouseUp={handleMouseUp}
-            className="nodrag nopan cursor-text select-text whitespace-pre-wrap text-sm leading-relaxed text-ink"
+            className="nodrag nopan cursor-text select-text text-sm leading-relaxed text-ink"
           >
-            {data.text}
-          </p>
+            <MarkdownPreview text={data.text} highlights={data.elaboratedSelections} />
+          </div>
         </div>
         {data.contextMenuOpen && (
           <div className="flex w-fit flex-col justify-start gap-2 border-l border-stone-300 pl-2.5 pt-0.5">
