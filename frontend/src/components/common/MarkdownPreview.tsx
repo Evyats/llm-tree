@@ -1,90 +1,68 @@
 import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
+import { normalizeMarkdownText } from "../../features/markdown/normalize";
 
 interface MarkdownPreviewProps {
   text: string;
-  highlights?: string[];
+  highlights?: Array<string | { text: string; occurrence: number }>;
   className?: string;
-}
-
-function normalizeMarkdownText(input: string): string {
-  const normalizedLines = input.replace(/\r\n/g, "\n").split("\n").map((line) => {
-    const matches = line.match(/\*\*/g) ?? [];
-    if (matches.length % 2 === 1) {
-      const last = line.lastIndexOf("**");
-      if (last >= 0) {
-        return `${line.slice(0, last)}${line.slice(last + 2)}`;
-      }
-    }
-    return line;
-  });
-  const compacted = normalizedLines.join("\n").replace(/\n{3,}/g, "\n\n");
-  // Avoid exaggerated vertical gaps around markdown lists.
-  const lines = compacted.split("\n");
-  const isListLine = (value: string) => /^(\s*[-*+]\s+|\s*\d+\.\s+)/.test(value);
-  const nextNonEmpty = (start: number) => {
-    for (let i = start; i < lines.length; i += 1) {
-      if (lines[i].trim().length > 0) return lines[i];
-    }
-    return "";
-  };
-  const output: string[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    const current = lines[i];
-    if (current.trim().length !== 0) {
-      output.push(current);
-      continue;
-    }
-    const prev = output.length > 0 ? output[output.length - 1] : "";
-    const next = nextNonEmpty(i + 1);
-    if (isListLine(prev) || isListLine(next)) {
-      continue;
-    }
-    if (output.length > 0 && output[output.length - 1].trim().length === 0) {
-      continue;
-    }
-    output.push("");
-  }
-  return output.join("\n");
 }
 
 export default function MarkdownPreview({ text, highlights, className }: MarkdownPreviewProps) {
   const normalizedText = normalizeMarkdownText(text);
   const highlightPlugin = useMemo(() => {
-    const targets = (highlights ?? [])
-      .map((item) => item.trim())
-      .filter((item, index, arr) => item.length > 0 && arr.indexOf(item) === index)
-      .sort((a, b) => b.length - a.length);
-    if (targets.length === 0) return null;
+    const normalizedTargets = (highlights ?? [])
+      .map((item) => (typeof item === "string" ? { text: item.trim() } : { text: item.text.trim(), occurrence: item.occurrence }))
+      .filter((item) => item.text.length > 0);
+    if (normalizedTargets.length === 0) return null;
+
+    const targetLookup = new Map<string, { all: boolean; occurrences: Set<number> }>();
+    for (const target of normalizedTargets) {
+      const current = targetLookup.get(target.text) ?? { all: false, occurrences: new Set<number>() };
+      if (typeof target.occurrence === "number") {
+        current.occurrences.add(target.occurrence);
+      } else {
+        current.all = true;
+      }
+      targetLookup.set(target.text, current);
+    }
+    const targetEntries = Array.from(targetLookup.entries()).sort((a, b) => b[0].length - a[0].length);
+    const counters = new Map<string, number>();
 
     const toHighlightedChildren = (value: string) => {
+      const candidates: Array<{ start: number; end: number; text: string }> = [];
+      for (const [targetText, rule] of targetEntries) {
+        let cursor = 0;
+        while (cursor <= value.length - targetText.length) {
+          const found = value.indexOf(targetText, cursor);
+          if (found < 0) break;
+          const seen = counters.get(targetText) ?? 0;
+          counters.set(targetText, seen + 1);
+          if (rule.all || rule.occurrences.has(seen)) {
+            candidates.push({ start: found, end: found + targetText.length, text: targetText });
+          }
+          cursor = found + targetText.length;
+        }
+      }
+      candidates.sort((a, b) => (a.start !== b.start ? a.start - b.start : b.text.length - a.text.length));
+
       const result: Array<{ type: string; value?: string; tagName?: string; properties?: object; children?: unknown[] }> = [];
       let cursor = 0;
-      while (cursor < value.length) {
-        let bestIndex = -1;
-        let bestTarget = "";
-        for (const target of targets) {
-          const found = value.indexOf(target, cursor);
-          if (found === -1) continue;
-          if (bestIndex === -1 || found < bestIndex || (found === bestIndex && target.length > bestTarget.length)) {
-            bestIndex = found;
-            bestTarget = target;
-          }
-        }
-        if (bestIndex === -1) {
-          result.push({ type: "text", value: value.slice(cursor) });
-          break;
-        }
-        if (bestIndex > cursor) {
-          result.push({ type: "text", value: value.slice(cursor, bestIndex) });
+      for (const candidate of candidates) {
+        if (candidate.start < cursor) continue;
+        if (candidate.start > cursor) {
+          result.push({ type: "text", value: value.slice(cursor, candidate.start) });
         }
         result.push({
           type: "element",
           tagName: "mark",
           properties: { className: ["rounded", "bg-amber-200/75", "px-0.5"] },
-          children: [{ type: "text", value: bestTarget }],
+          children: [{ type: "text", value: candidate.text }],
         });
-        cursor = bestIndex + bestTarget.length;
+        cursor = candidate.end;
+      }
+      if (cursor < value.length) {
+        result.push({ type: "text", value: value.slice(cursor) });
       }
       return result;
     };

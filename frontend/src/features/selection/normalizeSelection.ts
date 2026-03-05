@@ -20,7 +20,31 @@ function getTextOffset(root: HTMLElement, node: Node, offset: number): number | 
   return range.toString().length;
 }
 
-export function normalizeSelectionToWordBoundaries(selection: Selection, root: HTMLElement): string | null {
+function countOccurrencesBefore(text: string, pattern: string, endExclusive: number): number {
+  if (!pattern) return 0;
+  let count = 0;
+  let cursor = 0;
+  const limit = Math.max(0, Math.min(endExclusive, text.length));
+  while (cursor < limit) {
+    const found = text.indexOf(pattern, cursor);
+    if (found < 0 || found >= limit) {
+      break;
+    }
+    count += 1;
+    cursor = found + pattern.length;
+  }
+  return count;
+}
+
+export interface NormalizedSelection {
+  text: string;
+  occurrence: number;
+}
+
+export function normalizeSelectionToWordBoundariesDetailed(
+  selection: Selection,
+  root: HTMLElement
+): NormalizedSelection | null {
   if (selection.rangeCount === 0 || selection.isCollapsed) {
     return null;
   }
@@ -39,7 +63,8 @@ export function normalizeSelectionToWordBoundaries(selection: Selection, root: H
   const rawEnd = getTextOffset(root, range.endContainer, range.endOffset);
   if (rawStart === null || rawEnd === null) {
     const fallback = selection.toString().trim();
-    return fallback || null;
+    if (!fallback) return null;
+    return { text: fallback, occurrence: 0 };
   }
 
   let start = Math.max(0, Math.min(rawStart, rawEnd));
@@ -67,5 +92,15 @@ export function normalizeSelectionToWordBoundaries(selection: Selection, root: H
   }
 
   const normalized = fullText.slice(start, end).trim();
-  return normalized || null;
+  if (!normalized) {
+    return null;
+  }
+  return {
+    text: normalized,
+    occurrence: countOccurrencesBefore(fullText, normalized, start),
+  };
+}
+
+export function normalizeSelectionToWordBoundaries(selection: Selection, root: HTMLElement): string | null {
+  return normalizeSelectionToWordBoundariesDetailed(selection, root)?.text ?? null;
 }

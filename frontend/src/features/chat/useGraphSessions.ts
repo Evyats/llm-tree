@@ -9,6 +9,7 @@ import {
   renameGraph,
 } from "../../api/client";
 import type { ChatSummary } from "../../api/types";
+import { toErrorMessage } from "../../api/errors";
 import type { TranscriptLine } from "./types";
 import { GRAPH_STORAGE_KEY } from "../layout/constants";
 
@@ -113,7 +114,7 @@ export function useGraphSessions({
       setTranscript([]);
       await refreshGraphList();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start new chat");
+      setError(toErrorMessage(err, "Failed to start new chat"));
     } finally {
       setLoading(false);
     }
@@ -147,7 +148,7 @@ export function useGraphSessions({
         setPanelAnchorNodeId(null);
         await loadGraph(targetGraphId);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load chat");
+        setError(toErrorMessage(err, "Failed to load chat"));
       } finally {
         setLoading(false);
       }
@@ -167,7 +168,7 @@ export function useGraphSessions({
         }
         await refreshGraphList();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to rename chat");
+        setError(toErrorMessage(err, "Failed to rename chat"));
       } finally {
         setLoading(false);
       }
@@ -192,7 +193,7 @@ export function useGraphSessions({
         }
         await refreshGraphList();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete chat");
+        setError(toErrorMessage(err, "Failed to delete chat"));
       } finally {
         setLoading(false);
       }
@@ -209,7 +210,7 @@ export function useGraphSessions({
       await loadGraph(created.graph_id);
       await refreshGraphList();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete all chats");
+      setError(toErrorMessage(err, "Failed to delete all chats"));
     } finally {
       setLoading(false);
     }

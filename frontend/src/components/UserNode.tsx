@@ -1,25 +1,16 @@
 import { memo, useRef, type MouseEvent, type PointerEvent } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 
+import type { GraphNodeUiData } from "../features/graph/nodeUi";
 import { estimateNodeFrame } from "../features/layout/nodeSizing";
-import { normalizeSelectionToWordBoundaries } from "../features/selection/normalizeSelection";
-import type { NodeData } from "../store/useGraphStore";
+import { normalizeSelectionToWordBoundariesDetailed } from "../features/selection/normalizeSelection";
+import NodeHeaderRow from "./common/NodeHeaderRow";
 import NodeActionButton from "./common/NodeActionButton";
 import MarkdownPreview from "./common/MarkdownPreview";
 
-interface UserNodeData extends NodeData {
-  onOpenPanel?: (nodeId: string) => void;
-  panelActive?: boolean;
-  onSelectElaboration?: (nodeId: string, text: string, x: number, y: number) => void;
-  contextMenuOpen?: boolean;
-  onDeleteBranch?: (nodeId: string) => void;
-  onPlaceholderTwo?: () => void;
-  onToggleContextMenu?: (nodeId: string) => void;
-}
-
 const ACTION_RAIL_EXPANDED_WIDTH = 44;
 
-function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
+function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
   const contentRef = useRef<HTMLDivElement>(null);
   const size = estimateNodeFrame("user", data.text);
   const baseWidth = size.width;
@@ -37,12 +28,12 @@ function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
       if (!contentRef.current || !contentRef.current.contains(selection.anchorNode)) {
         return;
       }
-      const text = normalizeSelectionToWordBoundaries(selection, contentRef.current);
-      if (!text) {
+      const normalized = normalizeSelectionToWordBoundariesDetailed(selection, contentRef.current);
+      if (!normalized) {
         return;
       }
       const rect = selection.getRangeAt(0).getBoundingClientRect();
-      data.onSelectElaboration?.(id, text, rect.left + rect.width / 2, rect.top);
+      data.onSelectElaboration?.(id, normalized.text, normalized.occurrence, rect.left + rect.width / 2, rect.top);
     });
   };
 
@@ -72,26 +63,29 @@ function UserNode({ id, data, selected }: NodeProps<UserNodeData>) {
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
       <div className="flex items-stretch gap-3">
         <div className="min-w-0 flex-none" style={{ width: contentWidth }}>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-warm">User</div>
-            <NodeActionButton
-              className={`rounded px-2 py-1 text-xs text-white ${
-                data.panelActive
-                  ? "bg-[#a86424] shadow-[inset_0_1px_3px_rgba(0,0,0,0.35)]"
-                  : "bg-warm hover:opacity-90"
-              }`}
-              onClick={() => {
-                data.onOpenPanel?.(id);
-              }}
-              ariaLabel="Open context panel"
-              title="Open context panel"
-            >
-              <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </NodeActionButton>
-          </div>
+          <NodeHeaderRow
+            className="mb-1"
+            left={<div className="text-[11px] font-semibold uppercase tracking-wide text-warm">User</div>}
+            right={
+              <NodeActionButton
+                className={`rounded px-2 py-1 text-xs text-white ${
+                  data.panelActive
+                    ? "bg-[#a86424] shadow-[inset_0_1px_3px_rgba(0,0,0,0.35)]"
+                    : "bg-warm hover:opacity-90"
+                }`}
+                onClick={() => {
+                  data.onOpenPanel?.(id);
+                }}
+                ariaLabel="Open context panel"
+                title="Open context panel"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M7 4H4v3M13 4h3v3M4 13v3h3M16 13v3h-3" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M8 8h4v4H8z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </NodeActionButton>
+            }
+          />
           <div
             ref={contentRef}
             onMouseDown={(event) => {

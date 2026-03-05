@@ -17,7 +17,7 @@ const SHARED_ROLE_SIZING: RoleSizingConfig = {
   minWidth: 190,
   maxWidth: 460,
   widthStepChars: 5,
-  widthStepPx: 8,
+  widthStepPx: 3,
   horizontalPadding: 32,
   minHeight: 86,
   lineHeight: 22,

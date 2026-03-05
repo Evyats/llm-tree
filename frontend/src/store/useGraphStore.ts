@@ -17,7 +17,7 @@ export interface NodeData {
   siblingOrder?: number;
   mode: string;
   highlightedText: string | null;
-  elaboratedSelections?: string[];
+  elaboratedSelections?: Array<string | { text: string; occurrence: number }>;
   sizingSignature?: string;
 }
 
@@ -36,6 +36,8 @@ interface GraphState {
   setNodes: (nodes: Node<NodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
   updateNodeVariant: (nodeId: string, variantIndex: number) => void;
+  lockNodeVariant: (nodeId: string) => void;
+  addElaboratedSelection: (nodeId: string, selectionText: string, occurrence: number) => Node<NodeData>[];
   setPanelOpen: (open: boolean) => void;
   setTranscript: (transcript: TranscriptLine[]) => void;
   setResponseSource: (source: "live" | "fallback" | null) => void;
@@ -84,6 +86,40 @@ export const useGraphStore = create<GraphState>((set) => ({
         };
       }),
     })),
+  lockNodeVariant: (nodeId) =>
+    set((state) => ({
+      nodes: state.nodes.map((node) =>
+        node.id === nodeId ? { ...node, data: { ...node.data, variantLocked: true } } : node
+      ),
+    })),
+  addElaboratedSelection: (nodeId, selectionText, occurrence) => {
+    let nextNodes: Node<NodeData>[] = [];
+    set((state) => {
+      nextNodes = state.nodes.map((node) => {
+        if (node.id !== nodeId) {
+          return node;
+        }
+        const existing = node.data.elaboratedSelections ?? [];
+        const hasSameSelection = existing.some((item) =>
+          typeof item === "string"
+            ? item === selectionText
+            : item.text === selectionText && item.occurrence === occurrence
+        );
+        if (hasSameSelection) {
+          return node;
+        }
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            elaboratedSelections: [...existing, { text: selectionText, occurrence }],
+          },
+        };
+      });
+      return { nodes: nextNodes };
+    });
+    return nextNodes;
+  },
   setPanelOpen: (panelOpen) => set({ panelOpen }),
   setTranscript: (transcript) => set({ transcript }),
   setResponseSource: (responseSource) => set({ responseSource }),

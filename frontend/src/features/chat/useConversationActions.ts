@@ -2,10 +2,15 @@ import { useCallback } from "react";
 import type { Node } from "reactflow";
 
 import { continueFromNode, continueInPanel } from "../../api/client";
+import { toErrorMessage } from "../../api/errors";
 import { getContinueFromVariantIndex } from "../graph/nodeSelectors";
 import type { NodeData } from "../../store/useGraphStore";
-import { edgePayloadToFlowEdge, nodePayloadToFlowNode } from "../../store/mappers";
 import type { Edge } from "reactflow";
+import {
+  buildOptimisticBranch,
+  isOptimisticBranchStillRelevant,
+  reconcileOptimisticBranch,
+} from "./optimisticBranch";
 
 interface UseConversationActionsParams {
   graphId: string | null;
@@ -111,73 +116,29 @@ export function useConversationActions({
       const parentPos = continueFromNodeId ? baseNodesById.get(continueFromNodeId)?.position : null;
       const baseX = parentPos?.x ?? 0;
       const baseY = (parentPos?.y ?? 80) + 170;
-      const tempUserId = generateTempId();
-      const tempAssistantId = generateTempId();
-      const tempUserEdgeId = generateTempId();
-      const tempAssistantEdgeId = generateTempId();
-      const optimisticNodes: Node<NodeData>[] = [
-        ...baseNodes,
-        {
-          id: tempUserId,
-          type: "userNode",
-          position: { x: baseX, y: baseY },
-          data: {
-            role: "user",
-            parentId: continueFromNodeId,
-            text: userText,
-            variants: null,
-            variantIndex: 0,
-            mode,
-            highlightedText: highlightedText ?? null,
-          },
-        },
-        {
-          id: tempAssistantId,
-          type: "assistantNode",
-          position: { x: baseX, y: baseY + 170 },
-          data: {
-            role: "assistant",
-            parentId: tempUserId,
-            text: "",
-            variants: null,
-            variantIndex: 0,
-            mode: "normal",
-            highlightedText: null,
-            pending: true,
-          },
-        },
-      ];
-      const optimisticEdges: Edge[] = [
-        ...baseEdges,
-        ...(continueFromNodeId
-          ? [
-              {
-                id: tempUserEdgeId,
-                source: continueFromNodeId,
-                target: tempUserId,
-                type: "straight",
-              } as Edge,
-            ]
-          : []),
-        {
-          id: tempAssistantEdgeId,
-          source: tempUserId,
-          target: tempAssistantId,
-          type: "straight",
-        } as Edge,
-      ];
-      const isRequestStillRelevant = () => {
-        const currentNodes = getLatestNodes();
-        const currentIds = new Set(currentNodes.map((node) => node.id));
-        return currentIds.has(tempUserId) && currentIds.has(tempAssistantId);
-      };
+      const optimistic = buildOptimisticBranch(
+        baseNodes,
+        baseEdges,
+        continueFromNodeId,
+        userText,
+        baseX,
+        baseY,
+        generateTempId,
+        mode
+      );
+      optimistic.nodes[optimistic.nodes.length - 2].data.highlightedText = highlightedText ?? null;
+      const isRequestStillRelevant = () =>
+        isOptimisticBranchStillRelevant(getLatestNodes(), {
+          tempUserId: optimistic.ids.tempUserId,
+          tempAssistantId: optimistic.ids.tempAssistantId,
+        });
       try {
         setLoading(true);
         setModelResponseLoading(true);
         setError(null);
-        setNodes(optimisticNodes);
-        setEdges(optimisticEdges);
-        setSelectedNode(tempAssistantId);
+        setNodes(optimistic.nodes);
+        setEdges(optimistic.edges);
+        setSelectedNode(optimistic.ids.tempAssistantId);
         const response = await continueFromNode({
           graph_id: graphId,
           continue_from_node_id: continueFromNodeId,
@@ -187,17 +148,12 @@ export function useConversationActions({
           highlighted_text: highlightedText ?? null,
           selected_model: selectedModel,
         });
-        const nextNodes = optimisticNodes
-          .filter((node) => node.id !== tempUserId && node.id !== tempAssistantId)
-          .concat([nodePayloadToFlowNode(response.created_user_node), nodePayloadToFlowNode(response.created_assistant_node)]);
-        const nextEdges = optimisticEdges
-          .filter((edge) => edge.id !== tempUserEdgeId && edge.id !== tempAssistantEdgeId)
-          .concat(response.created_edges.map(edgePayloadToFlowEdge));
+        const next = reconcileOptimisticBranch(optimistic.nodes, optimistic.edges, response, optimistic.ids);
         if (!isRequestStillRelevant()) {
           return;
         }
-        setNodes(nextNodes);
-        setEdges(nextEdges);
+        setNodes(next.nodes);
+        setEdges(next.edges);
         setSelectedNode(response.created_assistant_node.id);
         setResponseSource(response.response_source);
         setTranscript(response.transcript_window);
@@ -208,7 +164,7 @@ export function useConversationActions({
         if (isRequestStillRelevant()) {
           setNodes(baseNodes);
           setEdges(baseEdges);
-          setError(err instanceof Error ? err.message : "Failed to continue conversation");
+          setError(toErrorMessage(err, "Failed to continue conversation"));
         }
       } finally {
         setModelResponseLoading(false);
@@ -260,69 +216,28 @@ export function useConversationActions({
     const baseX = anchorPos?.x ?? 0;
     const baseY = (anchorPos?.y ?? 80) + 170;
     const userText = panelText.trim();
-    const tempUserId = generateTempId();
-    const tempAssistantId = generateTempId();
-    const tempUserEdgeId = generateTempId();
-    const tempAssistantEdgeId = generateTempId();
-    const optimisticNodes: Node<NodeData>[] = [
-      ...baseNodes,
-      {
-        id: tempUserId,
-        type: "userNode",
-        position: { x: baseX, y: baseY },
-        data: {
-          role: "user",
-          parentId: persistedAnchorNodeId,
-          text: userText,
-          variants: null,
-          variantIndex: 0,
-          mode: "normal",
-          highlightedText: null,
-        },
-      },
-      {
-        id: tempAssistantId,
-        type: "assistantNode",
-        position: { x: baseX, y: baseY + 170 },
-        data: {
-          role: "assistant",
-          parentId: tempUserId,
-          text: "",
-          variants: null,
-          variantIndex: 0,
-          mode: "normal",
-          highlightedText: null,
-          pending: true,
-        },
-      },
-    ];
-    const optimisticEdges: Edge[] = [
-      ...baseEdges,
-      {
-        id: tempUserEdgeId,
-        source: persistedAnchorNodeId,
-        target: tempUserId,
-        type: "straight",
-      } as Edge,
-      {
-        id: tempAssistantEdgeId,
-        source: tempUserId,
-        target: tempAssistantId,
-        type: "straight",
-      } as Edge,
-    ];
-    const isRequestStillRelevant = () => {
-      const currentNodes = getLatestNodes();
-      const currentIds = new Set(currentNodes.map((node) => node.id));
-      return currentIds.has(tempUserId) && currentIds.has(tempAssistantId);
-    };
+    const optimistic = buildOptimisticBranch(
+      baseNodes,
+      baseEdges,
+      persistedAnchorNodeId,
+      userText,
+      baseX,
+      baseY,
+      generateTempId,
+      "normal"
+    );
+    const isRequestStillRelevant = () =>
+      isOptimisticBranchStillRelevant(getLatestNodes(), {
+        tempUserId: optimistic.ids.tempUserId,
+        tempAssistantId: optimistic.ids.tempAssistantId,
+      });
     try {
       setLoading(true);
       setModelResponseLoading(true);
       setError(null);
-      setNodes(optimisticNodes);
-      setEdges(optimisticEdges);
-      setSelectedNode(tempAssistantId);
+      setNodes(optimistic.nodes);
+      setEdges(optimistic.edges);
+      setSelectedNode(optimistic.ids.tempAssistantId);
       const response = await continueInPanel({
         graph_id: graphId,
         anchor_node_id: persistedAnchorNodeId,
@@ -330,17 +245,12 @@ export function useConversationActions({
         user_text: userText,
         selected_model: selectedModel,
       });
-      const nextNodes = optimisticNodes
-        .filter((node) => node.id !== tempUserId && node.id !== tempAssistantId)
-        .concat([nodePayloadToFlowNode(response.created_user_node), nodePayloadToFlowNode(response.created_assistant_node)]);
-      const nextEdges = optimisticEdges
-        .filter((edge) => edge.id !== tempUserEdgeId && edge.id !== tempAssistantEdgeId)
-        .concat(response.created_edges.map(edgePayloadToFlowEdge));
+      const next = reconcileOptimisticBranch(optimistic.nodes, optimistic.edges, response, optimistic.ids);
       if (!isRequestStillRelevant()) {
         return;
       }
-      setNodes(nextNodes);
-      setEdges(nextEdges);
+      setNodes(next.nodes);
+      setEdges(next.edges);
       setPanelAnchorNodeId(response.created_assistant_node.id);
       setSelectedNode(response.created_assistant_node.id);
       setTranscript(response.transcript_window);
@@ -351,7 +261,7 @@ export function useConversationActions({
       if (isRequestStillRelevant()) {
         setNodes(baseNodes);
         setEdges(baseEdges);
-        setError(err instanceof Error ? err.message : "Failed to continue in panel");
+        setError(toErrorMessage(err, "Failed to continue in panel"));
       }
     } finally {
       setModelResponseLoading(false);

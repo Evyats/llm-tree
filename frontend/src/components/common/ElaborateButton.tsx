@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 interface ElaborateAction {
   nodeId: string;
   text: string;
+  occurrence?: number;
   x: number;
   y: number;
 }

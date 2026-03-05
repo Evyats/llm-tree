@@ -13,3 +13,16 @@ export const FIT_VIEW_OPTIONS: FitViewOptions = {
   duration: 280,
   includeHiddenNodes: true,
 };
+
+export const MIN_ZOOM = 0.05;
+export const MAX_ZOOM = 2.5;
+export const DEFAULT_FIT_VIEW_BUTTON_PADDING = 0.05;
+export const ZOOM_BUTTON_FACTOR = 1.75;
+export const NODE_ORIGIN_X = 0.5;
+export const NODE_ORIGIN_Y = 0;
+
+export const NODE_MIN_WIDTH_DEFAULT = 150;
+export const NODE_MAX_WIDTH_DEFAULT = 110;
+export const NODE_MAX_WIDTH_UNIT_PX = 4;
+
+export const COLLAPSED_PREVIEW_TEXT_MAX = 42;
