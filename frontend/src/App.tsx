@@ -169,6 +169,7 @@ export default function App() {
   const wheelHoverStartRef = useRef<number>(0);
   const wheelHoverRafRef = useRef<number | null>(null);
   const wheelLastStepAtRef = useRef(0);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const suppressPaneClearUntilRef = useRef(0);
 
   useEffect(() => {
@@ -203,6 +204,21 @@ export default function App() {
 
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+    const onWheel = (event: WheelEvent) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("wheel", onWheel, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("wheel", onWheel);
+    };
   }, []);
 
   useEffect(() => {
@@ -476,7 +492,8 @@ export default function App() {
   );
 
   const handleAssistantWheel = useCallback(
-    (nodeId: string, deltaY: number) => {
+    (nodeId: string, deltaY: number, clientX: number, clientY: number) => {
+      lastPointerRef.current = { x: clientX, y: clientY };
       if (!wheelHoverActive || wheelHoverNodeId !== nodeId) {
         return false;
       }
@@ -733,6 +750,30 @@ export default function App() {
   }, [assistantWithBranch, clearAssistantWheelHover, nodesById, wheelHoverNodeId]);
 
   useEffect(() => {
+    if (!wheelHoverNodeId) {
+      return;
+    }
+    const pointer = lastPointerRef.current;
+    if (!pointer) {
+      return;
+    }
+    const nodeEl = document.querySelector(`.react-flow__node[data-id="${wheelHoverNodeId}"]`) as HTMLElement | null;
+    if (!nodeEl) {
+      clearAssistantWheelHover();
+      return;
+    }
+    const rect = nodeEl.getBoundingClientRect();
+    const inside =
+      pointer.x >= rect.left &&
+      pointer.x <= rect.right &&
+      pointer.y >= rect.top &&
+      pointer.y <= rect.bottom;
+    if (!inside) {
+      clearAssistantWheelHover();
+    }
+  }, [clearAssistantWheelHover, nodeSizes, nodes, wheelHoverNodeId]);
+
+  useEffect(() => {
     if (!panelOpen || !panelAnchorNodeId) return;
     const synced = buildTranscriptUntilNode(nodesRef.current, panelAnchorNodeId);
     if (synced.length === 0) return;
@@ -770,64 +811,75 @@ export default function App() {
       const collapsedVisibleSet = new Set(collapsedProxyTargets);
       const baseNodes = nodes
         .filter((node) => !hiddenNodeIds.has(node.id))
-        .map((node) => ({
-        ...node,
-        selected: node.id === selectedNodeId,
-        type: collapsedVisibleSet.has(node.id) ? "collapsedNode" : node.type,
-        position: fixedMode ? structure.positions.get(node.id) ?? node.position : node.position,
-        data: {
-          ...(collapsedVisibleSet.has(node.id)
-            ? {
-                label: "Folded",
-                previewText: truncatePreview((node.data.text ?? "").trim()),
-                hiddenCount: Math.max(0, getSubtreeNodeIds(node.id).size - 1),
-                onUnfold: () => {
-                  unfoldSubtree(getSubtreeNodeIds(node.id));
-                },
-              }
-            : {}),
-          ...node.data,
-          sizingSignature: nodeSizingSignature,
-          layer: structure.meta.get(node.id)?.layer ?? 0,
-          siblingOrder: structure.meta.get(node.id)?.siblingOrder ?? 0,
-          variantLocked: assistantWithBranch.has(node.id) || node.data.variantLocked === true,
-          onCycleVariant: cycleVariant,
-          onApproveVariant: approveVariant,
+        .map((node) => {
+          const activeSelectionHighlight =
+            elaborateAction && elaborateAction.nodeId === node.id
+              ? [{ text: elaborateAction.text, occurrence: elaborateAction.occurrence }]
+              : [];
+          const mergedHighlights = [...(node.data.elaboratedSelections ?? []), ...activeSelectionHighlight];
+
+          return {
+            ...node,
+            selected: node.id === selectedNodeId,
+            type: collapsedVisibleSet.has(node.id) ? "collapsedNode" : node.type,
+            position: fixedMode ? structure.positions.get(node.id) ?? node.position : node.position,
+            data: {
+              ...(collapsedVisibleSet.has(node.id)
+                ? {
+                    label: "Folded",
+                    previewText: truncatePreview((node.data.text ?? "").trim()),
+                    hiddenCount: Math.max(0, getSubtreeNodeIds(node.id).size - 1),
+                    onUnfold: () => {
+                      unfoldSubtree(getSubtreeNodeIds(node.id));
+                    },
+                  }
+                : {}),
+              ...node.data,
+              elaboratedSelections: mergedHighlights,
+              sizingSignature: nodeSizingSignature,
+              layer: structure.meta.get(node.id)?.layer ?? 0,
+              siblingOrder: structure.meta.get(node.id)?.siblingOrder ?? 0,
+              variantLocked: assistantWithBranch.has(node.id) || node.data.variantLocked === true,
+              onCycleVariant: cycleVariant,
+              onApproveVariant: approveVariant,
           onSelectElaboration: (nodeId: string, text: string, occurrence: number, x: number, y: number) => {
             setElaborateAction({ nodeId, text, occurrence, x, y });
           },
           onOpenPanel: (nodeId: string) => {
             if (panelOpen && panelAnchorNodeId === nodeId) {
               setPanelOpen(false);
-              setPanelAnchorNodeId(null);
-              return;
-            }
-            void openContextPanelForNode(nodeId);
-          },
-          panelActive: panelOpen && panelAnchorNodeId === node.id,
-          contextMenuOpen: nodeContextMenuNodeId === node.id,
-          onDeleteBranch: (nodeId: string) => {
-            void handleDeleteNodeSubtree(nodeId);
-          },
-          onPlaceholderTwo: () => {
-            void handleExtractPathToTree(node.id);
-          },
-          onHoverWheelStart: (nodeId: string) => {
-            handleAssistantHoverStart(nodeId);
-          },
-          onHoverWheelEnd: (nodeId: string) => {
-            handleAssistantHoverEnd(nodeId);
-          },
-          onHoverWheelScroll: (nodeId: string, deltaY: number) => handleAssistantWheel(nodeId, deltaY),
-          onToggleContextMenu: (nodeId: string) => {
-            setSelectedNode(nodeId);
-            setNodeContextMenuNodeId((prev) => (prev === nodeId ? null : nodeId));
-          },
-        } as GraphNodeUiData,
-      }));
+                  setPanelAnchorNodeId(null);
+                  return;
+                }
+                void openContextPanelForNode(nodeId);
+              },
+              panelActive: panelOpen && panelAnchorNodeId === node.id,
+              contextMenuOpen: nodeContextMenuNodeId === node.id,
+              onDeleteBranch: (nodeId: string) => {
+                void handleDeleteNodeSubtree(nodeId);
+              },
+              onPlaceholderTwo: () => {
+                void handleExtractPathToTree(node.id);
+              },
+              onHoverWheelStart: (nodeId: string) => {
+                handleAssistantHoverStart(nodeId);
+              },
+              onHoverWheelEnd: (nodeId: string) => {
+                handleAssistantHoverEnd(nodeId);
+              },
+              onHoverWheelScroll: (nodeId: string, deltaY: number, clientX: number, clientY: number) =>
+                handleAssistantWheel(nodeId, deltaY, clientX, clientY),
+              onToggleContextMenu: (nodeId: string) => {
+                setSelectedNode(nodeId);
+                setNodeContextMenuNodeId((prev) => (prev === nodeId ? null : nodeId));
+              },
+            } as GraphNodeUiData,
+          };
+        });
       return baseNodes;
     },
     [
+      elaborateAction,
       assistantWithBranch,
       approveVariant,
       collapsedProxyTargets,
@@ -1019,6 +1071,14 @@ export default function App() {
               setNodeContextMenuNodeId(null);
             }}
             onNodeDoubleClick={(event, node) => {
+              const target = event.target;
+              if (target instanceof Element && target.closest('[data-node-text-content="true"]')) {
+                return;
+              }
+              const selection = window.getSelection();
+              if (selection && !selection.isCollapsed) {
+                return;
+              }
               event.preventDefault();
               event.stopPropagation();
               if (node.type === "collapsedNode") {

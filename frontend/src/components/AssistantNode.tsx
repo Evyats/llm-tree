@@ -60,7 +60,7 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
       }}
       onWheel={(event) => {
         if (!wheelEligible) return;
-        const handled = data.onHoverWheelScroll?.(id, event.deltaY) ?? false;
+        const handled = data.onHoverWheelScroll?.(id, event.deltaY, event.clientX, event.clientY) ?? false;
         if (handled) {
           event.preventDefault();
           event.stopPropagation();
@@ -160,6 +160,7 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
           />
           <div
             ref={contentRef}
+            data-node-text-content="true"
             onMouseDown={(event) => {
               if (event.button === 0) {
                 event.stopPropagation();

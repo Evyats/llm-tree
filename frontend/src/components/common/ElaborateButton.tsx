@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 interface ElaborateAction {
   nodeId: string;
@@ -16,6 +16,11 @@ interface ElaborateButtonProps {
 
 export default function ElaborateButton({ action, onElaborateClick, onClose }: ElaborateButtonProps) {
   const popupRef = useRef<HTMLDivElement>(null);
+
+  const preserveSelection = (event: ReactMouseEvent | ReactPointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   useEffect(() => {
     if (!action) {
@@ -43,18 +48,32 @@ export default function ElaborateButton({ action, onElaborateClick, onClose }: E
       ref={popupRef}
       className="fixed z-30 flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded border border-stone-300 bg-paper/95 p-1 shadow-float backdrop-blur"
       style={{ left: action.x, top: action.y }}
+      onMouseDown={preserveSelection}
+      onPointerDown={preserveSelection}
     >
       <button
         className="rounded bg-warm px-2 py-1 text-xs text-white hover:opacity-90"
         onClick={() => onElaborateClick(action)}
         type="button"
+        onMouseDown={preserveSelection}
+        onPointerDown={preserveSelection}
       >
         Elaborate
       </button>
-      <button className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 hover:bg-stone-300" type="button">
+      <button
+        className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 hover:bg-stone-300"
+        type="button"
+        onMouseDown={preserveSelection}
+        onPointerDown={preserveSelection}
+      >
         Placeholder 2
       </button>
-      <button className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 hover:bg-stone-300" type="button">
+      <button
+        className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 hover:bg-stone-300"
+        type="button"
+        onMouseDown={preserveSelection}
+        onPointerDown={preserveSelection}
+      >
         Placeholder 3
       </button>
     </div>

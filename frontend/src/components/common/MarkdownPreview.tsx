@@ -27,9 +27,7 @@ export default function MarkdownPreview({ text, highlights, className }: Markdow
       targetLookup.set(target.text, current);
     }
     const targetEntries = Array.from(targetLookup.entries()).sort((a, b) => b[0].length - a[0].length);
-    const counters = new Map<string, number>();
-
-    const toHighlightedChildren = (value: string) => {
+    const toHighlightedChildren = (value: string, counters: Map<string, number>) => {
       const candidates: Array<{ start: number; end: number; text: string }> = [];
       for (const [targetText, rule] of targetEntries) {
         let cursor = 0;
@@ -44,40 +42,63 @@ export default function MarkdownPreview({ text, highlights, className }: Markdow
           cursor = found + targetText.length;
         }
       }
-      candidates.sort((a, b) => (a.start !== b.start ? a.start - b.start : b.text.length - a.text.length));
-
       const result: Array<{ type: string; value?: string; tagName?: string; properties?: object; children?: unknown[] }> = [];
-      let cursor = 0;
+      if (candidates.length === 0) {
+        return [{ type: "text", value }];
+      }
+
+      const boundaries = new Set<number>([0, value.length]);
       for (const candidate of candidates) {
-        if (candidate.start < cursor) continue;
-        if (candidate.start > cursor) {
-          result.push({ type: "text", value: value.slice(cursor, candidate.start) });
+        boundaries.add(candidate.start);
+        boundaries.add(candidate.end);
+      }
+      const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
+
+      for (let i = 0; i < sortedBoundaries.length - 1; i += 1) {
+        const start = sortedBoundaries[i];
+        const end = sortedBoundaries[i + 1];
+        if (end <= start) continue;
+        const slice = value.slice(start, end);
+        if (!slice) continue;
+
+        const overlapDepth = candidates.reduce((count, candidate) => {
+          return candidate.start <= start && candidate.end >= end ? count + 1 : count;
+        }, 0);
+
+        if (overlapDepth === 0) {
+          result.push({ type: "text", value: slice });
+          continue;
         }
+
+        const highlightClassName =
+          overlapDepth >= 3
+            ? ["rounded", "bg-amber-400", "px-0.5"]
+            : overlapDepth === 2
+              ? ["rounded", "bg-amber-300/90", "px-0.5"]
+              : ["rounded", "bg-amber-200/75", "px-0.5"];
+
         result.push({
           type: "element",
           tagName: "mark",
-          properties: { className: ["rounded", "bg-amber-200/75", "px-0.5"] },
-          children: [{ type: "text", value: candidate.text }],
+          properties: { className: highlightClassName },
+          children: [{ type: "text", value: slice }],
         });
-        cursor = candidate.end;
       }
-      if (cursor < value.length) {
-        result.push({ type: "text", value: value.slice(cursor) });
-      }
+
       return result;
     };
 
-    const walk = (node: any, inCode: boolean) => {
+    const walk = (node: any, inCode: boolean, counters: Map<string, number>) => {
       if (!node || !Array.isArray(node.children)) return;
       const nextChildren: any[] = [];
       for (const child of node.children) {
         if (child?.type === "text" && !inCode && typeof child.value === "string") {
-          nextChildren.push(...toHighlightedChildren(child.value));
+          nextChildren.push(...toHighlightedChildren(child.value, counters));
           continue;
         }
         if (child?.type === "element") {
           const tag = String(child.tagName ?? "");
-          walk(child, inCode || tag === "code" || tag === "pre");
+          walk(child, inCode || tag === "code" || tag === "pre", counters);
         }
         nextChildren.push(child);
       }
@@ -85,7 +106,8 @@ export default function MarkdownPreview({ text, highlights, className }: Markdow
     };
 
     return () => (tree: any) => {
-      walk(tree, false);
+      const counters = new Map<string, number>();
+      walk(tree, false, counters);
     };
   }, [highlights]);
 

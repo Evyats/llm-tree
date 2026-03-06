@@ -88,6 +88,7 @@ function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
           />
           <div
             ref={contentRef}
+            data-node-text-content="true"
             onMouseDown={(event) => {
               if (event.button === 0) {
                 event.stopPropagation();

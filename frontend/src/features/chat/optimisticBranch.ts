@@ -82,9 +82,33 @@ export function reconcileOptimisticBranch(
   response: ContinueResponse,
   ids: OptimisticBranchIds
 ) {
+  const preservedById = new Map(
+    optimisticNodes.map((node) => [
+      node.id,
+      {
+        elaboratedSelections: node.data.elaboratedSelections,
+        highlightedText: node.data.highlightedText,
+      },
+    ])
+  );
+
   const nodes = optimisticNodes
     .filter((node) => node.id !== ids.tempUserId && node.id !== ids.tempAssistantId)
-    .concat([nodePayloadToFlowNode(response.created_user_node), nodePayloadToFlowNode(response.created_assistant_node)]);
+    .concat([nodePayloadToFlowNode(response.created_user_node), nodePayloadToFlowNode(response.created_assistant_node)])
+    .map((node) => {
+      const preserved = preservedById.get(node.id);
+      if (!preserved) {
+        return node;
+      }
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          elaboratedSelections: preserved.elaboratedSelections ?? node.data.elaboratedSelections,
+          highlightedText: preserved.highlightedText ?? node.data.highlightedText,
+        },
+      };
+    });
   const edges = optimisticEdges
     .filter((edge) => edge.id !== ids.tempUserEdgeId && edge.id !== ids.tempAssistantEdgeId)
     .concat(response.created_edges.map(edgePayloadToFlowEdge));
@@ -98,4 +122,3 @@ export function isOptimisticBranchStillRelevant(
   const currentIds = new Set(currentNodes.map((node) => node.id));
   return currentIds.has(ids.tempUserId) && currentIds.has(ids.tempAssistantId);
 }
-

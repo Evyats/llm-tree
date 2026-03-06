@@ -9,7 +9,7 @@ export interface NodeUiCallbacks {
   onPlaceholderTwo?: () => void;
   onHoverWheelStart?: (nodeId: string) => void;
   onHoverWheelEnd?: (nodeId: string) => void;
-  onHoverWheelScroll?: (nodeId: string, deltaY: number) => boolean;
+  onHoverWheelScroll?: (nodeId: string, deltaY: number, clientX: number, clientY: number) => boolean;
   onToggleContextMenu?: (nodeId: string) => void;
 }
 
