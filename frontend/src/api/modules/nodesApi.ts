@@ -1,4 +1,5 @@
 import type { GraphEdgePayload, GraphNodePayload } from "../../types/graph";
+import type { CompactBranchResponse } from "../types";
 import { request } from "../http";
 
 export async function updateVariant(nodeId: string, variantIndex: number): Promise<void> {
@@ -20,5 +21,12 @@ export async function extractNodePath(nodeId: string): Promise<{
 }> {
   return request(`/api/nodes/${nodeId}/extract-path`, {
     method: "POST",
+  });
+}
+
+export async function compactBranch(nodeId: string, selectedModel: string): Promise<CompactBranchResponse> {
+  return request(`/api/nodes/${nodeId}/compact`, {
+    method: "POST",
+    body: JSON.stringify({ selected_model: selectedModel }),
   });
 }

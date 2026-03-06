@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from "react";
 
 interface ComposerBarProps {
   selectedNodeId: string | null;
+  selectedNodePending?: boolean;
   showFullSelectedNodeId: boolean;
   composerText: string;
   loading: boolean;
@@ -13,6 +14,7 @@ interface ComposerBarProps {
 
 export default function ComposerBar({
   selectedNodeId,
+  selectedNodePending = false,
   showFullSelectedNodeId,
   composerText,
   loading,
@@ -67,8 +69,8 @@ export default function ComposerBar({
           }
         }}
       />
-      <button className="rounded bg-accent px-4 py-2 text-sm text-white" onClick={onSend} disabled={loading} type="button">
-        {loading ? "..." : "Send"}
+      <button className="rounded bg-accent px-4 py-2 text-sm text-white" onClick={onSend} type="button">
+        {selectedNodePending ? "..." : "Send"}
       </button>
     </footer>
   );

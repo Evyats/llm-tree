@@ -35,6 +35,19 @@ class ExtractPathResponse(BaseModel):
     created_edges: list[EdgePayload]
 
 
+class CompactBranchRequest(BaseModel):
+    selected_model: str | None = None
+
+
+class CompactBranchResponse(BaseModel):
+    graph_id: str
+    title: str
+    nodes: list[NodePayload]
+    edges: list[EdgePayload]
+    response_source: Literal["live", "fallback"]
+    compacted_node_id: str
+
+
 class SetApiKeyRequest(BaseModel):
     api_key: str = Field(min_length=10)
 

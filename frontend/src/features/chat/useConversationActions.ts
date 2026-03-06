@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import type { Node } from "reactflow";
 
 import { continueFromNode, continueInPanel } from "../../api/client";
@@ -9,6 +9,7 @@ import type { Edge } from "reactflow";
 import {
   buildOptimisticBranch,
   isOptimisticBranchStillRelevant,
+  removeOptimisticBranch,
   reconcileOptimisticBranch,
 } from "./optimisticBranch";
 
@@ -19,6 +20,7 @@ interface UseConversationActionsParams {
   composerText: string;
   panelText: string;
   selectedModel: string;
+  fallbackDelayMs: number;
   nodes: Node<NodeData>[];
   edges: Edge[];
   getLatestNodes: () => Node<NodeData>[];
@@ -46,6 +48,7 @@ export function useConversationActions({
   composerText,
   panelText,
   selectedModel,
+  fallbackDelayMs,
   nodes,
   edges,
   getLatestNodes,
@@ -65,7 +68,29 @@ export function useConversationActions({
   setError,
   clearElaborateAction,
 }: UseConversationActionsParams) {
+  const requestCountRef = useRef(0);
+  const modelRequestCountRef = useRef(0);
   const isTempId = (id: string | null | undefined): id is string => Boolean(id && id.startsWith("temp-"));
+
+  const beginRequest = useCallback(() => {
+    requestCountRef.current += 1;
+    setLoading(true);
+  }, [setLoading]);
+
+  const endRequest = useCallback(() => {
+    requestCountRef.current = Math.max(0, requestCountRef.current - 1);
+    setLoading(requestCountRef.current > 0);
+  }, [setLoading]);
+
+  const beginModelRequest = useCallback(() => {
+    modelRequestCountRef.current += 1;
+    setModelResponseLoading(true);
+  }, [setModelResponseLoading]);
+
+  const endModelRequest = useCallback(() => {
+    modelRequestCountRef.current = Math.max(0, modelRequestCountRef.current - 1);
+    setModelResponseLoading(modelRequestCountRef.current > 0);
+  }, [setModelResponseLoading]);
 
   const resolvePersistedAnchorId = useCallback(
     (startId: string | null): string | null => {
@@ -86,6 +111,13 @@ export function useConversationActions({
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? `temp-${crypto.randomUUID()}`
       : `temp-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const waitForFallbackDelay = useCallback(async () => {
+    if (selectedModel !== "fallback" || fallbackDelayMs <= 0) {
+      return;
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, fallbackDelayMs));
+  }, [fallbackDelayMs, selectedModel]);
 
   const isPendingAssistantAnchor = useCallback(
     (nodeId: string | null) => {
@@ -109,6 +141,7 @@ export function useConversationActions({
         : "";
       const userText = mode === "elaboration" ? elaborationText : composerText.trim();
       if (!userText) return;
+      const previousComposerText = composerText;
       const baseNodes = getLatestNodes();
       const baseEdges = getLatestEdges();
       const baseNodesById = new Map(baseNodes.map((node) => [node.id, node]));
@@ -133,9 +166,10 @@ export function useConversationActions({
           tempAssistantId: optimistic.ids.tempAssistantId,
         });
       try {
-        setLoading(true);
-        setModelResponseLoading(true);
+        beginRequest();
+        beginModelRequest();
         setError(null);
+        setComposerText("");
         setNodes(optimistic.nodes);
         setEdges(optimistic.edges);
         setSelectedNode(optimistic.ids.tempAssistantId);
@@ -148,7 +182,8 @@ export function useConversationActions({
           highlighted_text: highlightedText ?? null,
           selected_model: selectedModel,
         });
-        const next = reconcileOptimisticBranch(optimistic.nodes, optimistic.edges, response, optimistic.ids);
+        await waitForFallbackDelay();
+        const next = reconcileOptimisticBranch(getLatestNodes(), getLatestEdges(), response, optimistic.ids);
         if (!isRequestStillRelevant()) {
           return;
         }
@@ -162,38 +197,42 @@ export function useConversationActions({
         await refreshGraphList();
       } catch (err) {
         if (isRequestStillRelevant()) {
-          setNodes(baseNodes);
-          setEdges(baseEdges);
+          const next = removeOptimisticBranch(getLatestNodes(), getLatestEdges(), optimistic.ids);
+          setNodes(next.nodes);
+          setEdges(next.edges);
+          setComposerText(previousComposerText);
           setError(toErrorMessage(err, "Failed to continue conversation"));
         }
       } finally {
-        setModelResponseLoading(false);
-        setLoading(false);
+        endModelRequest();
+        endRequest();
       }
     },
     [
+      beginModelRequest,
+      beginRequest,
+      endModelRequest,
+      endRequest,
       composerText,
-      edges,
       getLatestEdges,
       getLatestNodes,
       graphId,
       isPendingAssistantAnchor,
-      nodes,
       nodesById,
       refreshGraphList,
       resolvePersistedAnchorId,
       selectedNodeId,
       selectedModel,
+      fallbackDelayMs,
       setComposerText,
       setEdges,
       clearElaborateAction,
-    setError,
-    setLoading,
-    setModelResponseLoading,
-    setNodes,
-    setResponseSource,
-    setSelectedNode,
+      setError,
+      setNodes,
+      setResponseSource,
+      setSelectedNode,
       setTranscript,
+      waitForFallbackDelay,
     ]
   );
 
@@ -204,6 +243,7 @@ export function useConversationActions({
       return;
     }
     if (!panelText.trim()) return;
+    const previousPanelText = panelText;
     const baseNodes = getLatestNodes();
     const baseEdges = getLatestEdges();
     const baseNodesById = new Map(baseNodes.map((node) => [node.id, node]));
@@ -232,9 +272,10 @@ export function useConversationActions({
         tempAssistantId: optimistic.ids.tempAssistantId,
       });
     try {
-      setLoading(true);
-      setModelResponseLoading(true);
+      beginRequest();
+      beginModelRequest();
       setError(null);
+      setPanelText("");
       setNodes(optimistic.nodes);
       setEdges(optimistic.edges);
       setSelectedNode(optimistic.ids.tempAssistantId);
@@ -245,7 +286,8 @@ export function useConversationActions({
         user_text: userText,
         selected_model: selectedModel,
       });
-      const next = reconcileOptimisticBranch(optimistic.nodes, optimistic.edges, response, optimistic.ids);
+      await waitForFallbackDelay();
+      const next = reconcileOptimisticBranch(getLatestNodes(), getLatestEdges(), response, optimistic.ids);
       if (!isRequestStillRelevant()) {
         return;
       }
@@ -259,37 +301,41 @@ export function useConversationActions({
       await refreshGraphList();
     } catch (err) {
       if (isRequestStillRelevant()) {
-        setNodes(baseNodes);
-        setEdges(baseEdges);
+        const next = removeOptimisticBranch(getLatestNodes(), getLatestEdges(), optimistic.ids);
+        setNodes(next.nodes);
+        setEdges(next.edges);
+        setPanelText(previousPanelText);
         setError(toErrorMessage(err, "Failed to continue in panel"));
       }
     } finally {
-      setModelResponseLoading(false);
-      setLoading(false);
+      endModelRequest();
+      endRequest();
     }
   }, [
-    edges,
+    beginModelRequest,
+    beginRequest,
+    endModelRequest,
+    endRequest,
     getLatestEdges,
     getLatestNodes,
     graphId,
     isPendingAssistantAnchor,
-    nodes,
     nodesById,
     panelAnchorNodeId,
     panelText,
     selectedModel,
+    fallbackDelayMs,
     refreshGraphList,
     resolvePersistedAnchorId,
     setEdges,
     setError,
-    setLoading,
-    setModelResponseLoading,
     setNodes,
     setPanelAnchorNodeId,
     setPanelText,
     setResponseSource,
     setSelectedNode,
     setTranscript,
+    waitForFallbackDelay,
   ]);
 
   return {

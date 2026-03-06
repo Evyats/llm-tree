@@ -6,7 +6,8 @@ export interface NodeUiCallbacks {
   onSelectElaboration?: (nodeId: string, text: string, occurrence: number, x: number, y: number) => void;
   onOpenPanel?: (nodeId: string) => void;
   onDeleteBranch?: (nodeId: string) => void;
-  onPlaceholderTwo?: () => void;
+  onExtractPath?: (nodeId: string) => void;
+  onCompactBranch?: (nodeId: string) => void;
   onHoverWheelStart?: (nodeId: string) => void;
   onHoverWheelEnd?: (nodeId: string) => void;
   onHoverWheelScroll?: (nodeId: string, deltaY: number, clientX: number, clientY: number) => boolean;
@@ -16,6 +17,7 @@ export interface NodeUiCallbacks {
 export interface NodeUiState {
   panelActive?: boolean;
   contextMenuOpen?: boolean;
+  compacting?: boolean;
 }
 
 export type GraphNodeUiData = NodeData & NodeUiState & NodeUiCallbacks;

@@ -30,6 +30,9 @@ interface LayoutControlsPanelProps {
   assistantWheelHoldMs: number;
   setAssistantWheelHoldMs: (value: number) => void;
   assistantWheelHoldDefault: number;
+  fallbackDelayMs: number;
+  setFallbackDelayMs: (value: number) => void;
+  fallbackDelayDefault: number;
   nodeMinWidth: number;
   setNodeMinWidth: (value: number) => void;
   nodeMinWidthDefault: number;
@@ -76,6 +79,9 @@ export default function LayoutControlsPanel({
   assistantWheelHoldMs,
   setAssistantWheelHoldMs,
   assistantWheelHoldDefault,
+  fallbackDelayMs,
+  setFallbackDelayMs,
+  fallbackDelayDefault,
   nodeMinWidth,
   setNodeMinWidth,
   nodeMinWidthDefault,
@@ -224,6 +230,20 @@ export default function LayoutControlsPanel({
                   title="Double-click to reset"
                 />
               </label>
+              <label className="block text-[11px] text-stone-700">
+                Fallback delay (s): <span className="font-semibold">{(fallbackDelayMs / 1000).toFixed(1)}</span>
+                <input
+                  className="mt-1 w-full"
+                  type="range"
+                  min={0}
+                  max={10000}
+                  step={100}
+                  value={fallbackDelayMs}
+                  onChange={(event) => setFallbackDelayMs(Number(event.target.value))}
+                  onDoubleClick={() => setFallbackDelayMs(fallbackDelayDefault)}
+                  title="Double-click to reset"
+                />
+              </label>
             </>
           )}
           {tab === "sizing" && (
@@ -291,14 +311,14 @@ export default function LayoutControlsPanel({
           )}
           {tab === "userArrows" && (
             <div className="space-y-2">
-              <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">User Outgoing Arrows</div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-600">User Outgoing Arrows</div>
               <div className="mb-1 text-[10px] text-stone-500">Type</div>
               <div className="mb-2 flex flex-wrap items-center gap-1.5">
                 {EDGE_TYPE_OPTIONS.map((option) => (
                   <button
                     key={`user-type-${option.value}`}
                     type="button"
-                    className={`rounded px-2 py-1 ${
+                    className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${
                       userEdgeType === option.value
                         ? "bg-accent/20 text-accent border border-accent/40"
                         : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
@@ -316,7 +336,7 @@ export default function LayoutControlsPanel({
                   <button
                     key={`user-motion-${option.value}`}
                     type="button"
-                    className={`rounded px-2 py-1 ${
+                    className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${
                       userEdgeMotion === option.value
                         ? "bg-accent/20 text-accent border border-accent/40"
                         : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
@@ -334,7 +354,7 @@ export default function LayoutControlsPanel({
                   <button
                     key={`user-line-${option.value}`}
                     type="button"
-                    className={`rounded px-2 py-1 ${
+                    className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${
                       userEdgeLineStyle === option.value
                         ? "bg-accent/20 text-accent border border-accent/40"
                         : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
@@ -350,14 +370,14 @@ export default function LayoutControlsPanel({
           )}
           {tab === "assistantArrows" && (
             <div className="space-y-2">
-              <div className="mb-1 font-semibold uppercase tracking-wide text-stone-600">Assistant Outgoing Arrows</div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-stone-600">Assistant Outgoing Arrows</div>
               <div className="mb-1 text-[10px] text-stone-500">Type</div>
               <div className="mb-2 flex flex-wrap items-center gap-1.5">
                 {EDGE_TYPE_OPTIONS.map((option) => (
                   <button
                     key={`assistant-type-${option.value}`}
                     type="button"
-                    className={`rounded px-2 py-1 ${
+                    className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${
                       assistantEdgeType === option.value
                         ? "bg-accent/20 text-accent border border-accent/40"
                         : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
@@ -375,7 +395,7 @@ export default function LayoutControlsPanel({
                   <button
                     key={`assistant-motion-${option.value}`}
                     type="button"
-                    className={`rounded px-2 py-1 ${
+                    className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${
                       assistantEdgeMotion === option.value
                         ? "bg-accent/20 text-accent border border-accent/40"
                         : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"
@@ -393,7 +413,7 @@ export default function LayoutControlsPanel({
                   <button
                     key={`assistant-line-${option.value}`}
                     type="button"
-                    className={`rounded px-2 py-1 ${
+                    className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${
                       assistantEdgeLineStyle === option.value
                         ? "bg-accent/20 text-accent border border-accent/40"
                         : "bg-stone-200 text-stone-700 border border-transparent hover:bg-stone-300"

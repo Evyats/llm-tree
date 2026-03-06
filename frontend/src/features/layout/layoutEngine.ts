@@ -131,6 +131,11 @@ function buildStructureMeta(nodes: Node<NodeData>[]) {
       layer = toLayer(userSlot + 1);
       if (!parent || parent.data.role !== "user") {
         layer = toLayer(Math.ceil(fallbackLayer));
+        if (node.data.mode === "summary" && parent?.data.role === "assistant") {
+          // Compacted summary nodes intentionally skip the user lane and land on
+          // the next assistant lane below their assistant parent.
+          layer = toLayer(Math.ceil(fallbackLayer) + 2);
+        }
       }
       userRunRootId = null;
       userDepth = 0;

@@ -7,7 +7,11 @@ from app.models.edge import Edge
 from app.models.graph import Graph
 from app.models.node import Node
 from app.schemas.common import EdgePayload, NodePayload
+from app.schemas.graph import GraphResponse
+from app.services.context import node_display_text
 from app.services.errors import InvalidNodeRoleError, NodeNotFoundError, VariantLockedError
+from app.services.llm import generate_tree_summary_variants
+from app.services.layout import Y_STEP
 from app.services.payloads import to_edge_payload, to_node_payload
 
 
@@ -125,3 +129,112 @@ def extract_path_to_new_tree(db: Session, node_id: str) -> tuple[list[NodePayloa
     db.commit()
 
     return [to_node_payload(node) for node in created_nodes], [to_edge_payload(edge) for edge in created_edges]
+
+
+def compact_node_subtree(
+    db: Session,
+    node_id: str,
+    runtime_api_key: str | None,
+    selected_model: str | None,
+) -> tuple[GraphResponse, str, str]:
+    root = db.get(Node, node_id)
+    if root is None:
+        raise NodeNotFoundError("Node not found")
+
+    node_ids = collect_subtree_node_ids(db, root.id)
+    subtree_nodes = db.scalars(select(Node).where(Node.id.in_(node_ids)).order_by(Node.created_at)).all()
+    children_by_parent: dict[str, list[Node]] = {}
+    for node in subtree_nodes:
+        if node.parent_id is None or node.parent_id not in node_ids:
+            continue
+        children_by_parent.setdefault(node.parent_id, []).append(node)
+    tree_summary = _build_tree_summary(root, children_by_parent)
+    variants, source = generate_tree_summary_variants(
+        tree_summary=tree_summary,
+        runtime_api_key=runtime_api_key,
+        selected_model=selected_model,
+    )
+
+    incoming_edge = None
+    if root.parent_id:
+        incoming_edge = db.scalar(
+            select(Edge).where(Edge.source_node_id == root.parent_id, Edge.target_node_id == root.id).limit(1)
+        )
+
+    db.execute(
+        delete(Edge).where(Edge.source_node_id.in_(node_ids) | Edge.target_node_id.in_(node_ids))
+    )
+    db.execute(delete(Node).where(Node.id.in_(node_ids)))
+
+    summary_node = Node(
+        graph_id=root.graph_id,
+        role="assistant",
+        parent_id=root.parent_id,
+        variant_short=variants.short,
+        variant_medium=variants.medium,
+        variant_long=variants.long,
+        variant_index=0,
+        position_x=root.position_x,
+        position_y=root.position_y + (Y_STEP * 2),
+        mode="summary",
+        highlighted_text=None,
+    )
+    db.add(summary_node)
+    db.flush()
+
+    if root.parent_id:
+        db.add(
+            Edge(
+                graph_id=root.graph_id,
+                source_node_id=root.parent_id,
+                target_node_id=summary_node.id,
+                edge_type=incoming_edge.edge_type if incoming_edge else "branch",
+            )
+        )
+
+    graph = db.get(Graph, root.graph_id)
+    if graph is not None:
+        graph.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+
+    graph_nodes = db.scalars(select(Node).where(Node.graph_id == root.graph_id).order_by(Node.created_at)).all()
+    graph_edges = db.scalars(select(Edge).where(Edge.graph_id == root.graph_id).order_by(Edge.created_at)).all()
+    graph_title = graph.title if graph is not None else "Untitled Graph"
+    response = GraphResponse(
+        graph_id=root.graph_id,
+        title=graph_title,
+        nodes=[to_node_payload(node) for node in graph_nodes],
+        edges=[to_edge_payload(edge) for edge in graph_edges],
+    )
+    return response, source, summary_node.id
+
+
+def _build_tree_summary(root: Node, children_by_parent: dict[str, list[Node]]) -> dict:
+    branch_count = 0
+    leaf_count = 0
+    node_count = 0
+
+    def visit(node: Node) -> dict:
+        nonlocal branch_count, leaf_count, node_count
+        children = children_by_parent.get(node.id, [])
+        node_count += 1
+        if len(children) > 1:
+            branch_count += 1
+        if not children:
+            leaf_count += 1
+        return {
+            "role": node.role,
+            "text": node_display_text(node),
+            "mode": node.mode,
+            "children": [visit(child) for child in children],
+        }
+
+    tree = visit(root)
+    return {
+        "root_text": node_display_text(root),
+        "node_count": node_count,
+        "branch_count": branch_count,
+        "leaf_count": leaf_count,
+        "tree": tree,
+    }

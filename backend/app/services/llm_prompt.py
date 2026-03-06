@@ -4,7 +4,7 @@ def build_mode_instruction(mode: str, highlighted_text: str | None) -> str:
             "Elaborate specifically on the highlighted point from the prior assistant answer. "
             f"Highlighted point: {highlighted_text}"
         )
-    return "Answer the latest user message."
+    return ""
 
 
 def build_messages(
@@ -24,8 +24,9 @@ def build_messages(
                 "long is a detailed comprehensive answer."
             ),
         },
-        {"role": "system", "content": instruction},
     ]
+    if instruction:
+        messages.append({"role": "system", "content": instruction})
     for item in transcript:
         role = item.get("role", "")
         content = item.get("content", "")
@@ -33,4 +34,3 @@ def build_messages(
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_text})
     return messages
-

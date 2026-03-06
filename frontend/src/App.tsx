@@ -15,6 +15,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import {
+  compactBranch,
   deleteNodeSubtree,
   extractNodePath,
   getGraph,
@@ -134,6 +135,7 @@ export default function App() {
   const [nodeStepChars, setNodeStepChars] = useState(DEFAULT_ROLE_SIZING.assistant.widthStepChars);
   const [nodeStepPx, setNodeStepPx] = useState(DEFAULT_ROLE_SIZING.assistant.widthStepPx);
   const [assistantWheelHoldMs, setAssistantWheelHoldMs] = useState(DEFAULT_ASSISTANT_WHEEL_HOLD_MS);
+  const [fallbackDelayMs, setFallbackDelayMs] = useState(0);
   const [userEdgeType, setUserEdgeType] = useState<EdgeTypeValue>("default");
   const [assistantEdgeType, setAssistantEdgeType] = useState<EdgeTypeValue>("default");
   const [userEdgeMotion, setUserEdgeMotion] = useState<EdgeMotionValue>("animated");
@@ -150,6 +152,7 @@ export default function App() {
   const [wheelHoverProgress, setWheelHoverProgress] = useState(0);
   const [wheelHoverActive, setWheelHoverActive] = useState(false);
   const [nodeContextMenuNodeId, setNodeContextMenuNodeId] = useState<string | null>(null);
+  const [compactingNodeIds, setCompactingNodeIds] = useState<Set<string>>(new Set());
   const {
     collapsedTargets,
     collapsedEdgeSources,
@@ -171,6 +174,7 @@ export default function App() {
   const wheelLastStepAtRef = useRef(0);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const suppressPaneClearUntilRef = useRef(0);
+  const compactingCountsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -225,7 +229,32 @@ export default function App() {
     manualPositionsRef.current = new Map();
     setNodeSizes(new Map());
     resetCollapsed();
+    setCompactingNodeIds(new Set());
+    compactingCountsRef.current = new Map();
   }, [graphId, resetCollapsed]);
+
+  const addCompactingNodeIds = useCallback((ids: Set<string>) => {
+    const nextCounts = new Map(compactingCountsRef.current);
+    for (const id of ids) {
+      nextCounts.set(id, (nextCounts.get(id) ?? 0) + 1);
+    }
+    compactingCountsRef.current = nextCounts;
+    setCompactingNodeIds(new Set(nextCounts.keys()));
+  }, []);
+
+  const removeCompactingNodeIds = useCallback((ids: Set<string>) => {
+    const nextCounts = new Map(compactingCountsRef.current);
+    for (const id of ids) {
+      const current = nextCounts.get(id) ?? 0;
+      if (current <= 1) {
+        nextCounts.delete(id);
+      } else {
+        nextCounts.set(id, current - 1);
+      }
+    }
+    compactingCountsRef.current = nextCounts;
+    setCompactingNodeIds(new Set(nextCounts.keys()));
+  }, []);
 
   useEffect(() => {
     const maxWidthPx = nodeMaxWidth * NODE_MAX_WIDTH_UNIT_PX;
@@ -536,6 +565,7 @@ export default function App() {
     composerText,
     panelText,
     selectedModel,
+    fallbackDelayMs,
     nodes,
     edges,
     getLatestNodes: () => nodesRef.current,
@@ -628,6 +658,56 @@ export default function App() {
       }
     },
     [appendEntities, graphId, refreshGraphList]
+  );
+
+  const handleCompactBranch = useCallback(
+    async (nodeId: string) => {
+      if (!graphId) return;
+      const idsToCompact = getSubtreeNodeIds(nodeId);
+      setLoading(true);
+      setError(null);
+      setNodeContextMenuNodeId(null);
+      addCompactingNodeIds(idsToCompact);
+      try {
+        const response = await compactBranch(nodeId, selectedModel);
+        if (selectedModel === "fallback" && fallbackDelayMs > 0) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, fallbackDelayMs));
+        }
+        setGraph(response.graph_id, response.title, response.nodes, response.edges);
+        setSelectedNode(response.compacted_node_id);
+        setResponseSource(response.response_source);
+        if (panelAnchorNodeId && idsToCompact.has(panelAnchorNodeId)) {
+          setPanelOpen(false);
+          setPanelAnchorNodeId(null);
+          setTranscript([]);
+        }
+        if (elaborateAction && idsToCompact.has(elaborateAction.nodeId)) {
+          setElaborateAction(null);
+        }
+        await refreshGraphList();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to compact branch");
+      } finally {
+        removeCompactingNodeIds(idsToCompact);
+        setLoading(false);
+      }
+    },
+    [
+      addCompactingNodeIds,
+      elaborateAction,
+      getSubtreeNodeIds,
+      graphId,
+      panelAnchorNodeId,
+      refreshGraphList,
+      removeCompactingNodeIds,
+      fallbackDelayMs,
+      selectedModel,
+      setGraph,
+      setPanelOpen,
+      setSelectedNode,
+      setTranscript,
+      setResponseSource,
+    ]
   );
 
   const openContextPanelForNode = useCallback(
@@ -725,6 +805,7 @@ export default function App() {
   }, [fixedMode, layoutPanelOpen, updateLayoutPanelPosition]);
 
   const assistantWithBranch = useMemo(() => getAssistantNodesWithUserBranch(nodesById, edges), [edges, nodesById]);
+  const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) : undefined;
   const panelAnchorNode = panelAnchorNodeId ? nodesById.get(panelAnchorNodeId) : undefined;
   const canCyclePanelAnchorVariant =
     !!panelAnchorNode &&
@@ -835,6 +916,7 @@ export default function App() {
                   }
                 : {}),
               ...node.data,
+              compacting: compactingNodeIds.has(node.id),
               elaboratedSelections: mergedHighlights,
               sizingSignature: nodeSizingSignature,
               layer: structure.meta.get(node.id)?.layer ?? 0,
@@ -858,8 +940,11 @@ export default function App() {
               onDeleteBranch: (nodeId: string) => {
                 void handleDeleteNodeSubtree(nodeId);
               },
-              onPlaceholderTwo: () => {
-                void handleExtractPathToTree(node.id);
+              onExtractPath: (nodeId: string) => {
+                void handleExtractPathToTree(nodeId);
+              },
+              onCompactBranch: (nodeId: string) => {
+                void handleCompactBranch(nodeId);
               },
               onHoverWheelStart: (nodeId: string) => {
                 handleAssistantHoverStart(nodeId);
@@ -889,6 +974,7 @@ export default function App() {
       handleAssistantHoverEnd,
       handleAssistantHoverStart,
       handleAssistantWheel,
+      compactingNodeIds,
       hiddenNodeIds,
       nodes,
       panelAnchorNodeId,
@@ -902,6 +988,7 @@ export default function App() {
       unfoldSubtree,
       nodeContextMenuNodeId,
       handleExtractPathToTree,
+      handleCompactBranch,
       openContextPanelForNode,
     ]
   );
@@ -913,8 +1000,22 @@ export default function App() {
       nodesById,
       { type: userEdgeType, motion: userEdgeMotion, lineStyle: userEdgeLineStyle },
       { type: assistantEdgeType, motion: assistantEdgeMotion, lineStyle: assistantEdgeLineStyle }
-    );
+    ).map((edge) => {
+      if (!compactingNodeIds.has(edge.source) && !compactingNodeIds.has(edge.target)) {
+        return edge;
+      }
+      return {
+        ...edge,
+        animated: false,
+        style: {
+          ...(edge.style ?? {}),
+          opacity: 0.35,
+          pointerEvents: "none",
+        },
+      };
+    });
   }, [
+    compactingNodeIds,
     edges,
     hiddenNodeIds,
     nodesById,
@@ -1022,6 +1123,9 @@ export default function App() {
           assistantWheelHoldMs={assistantWheelHoldMs}
           setAssistantWheelHoldMs={setAssistantWheelHoldMs}
           assistantWheelHoldDefault={DEFAULT_ASSISTANT_WHEEL_HOLD_MS}
+          fallbackDelayMs={fallbackDelayMs}
+          setFallbackDelayMs={setFallbackDelayMs}
+          fallbackDelayDefault={0}
           nodeMinWidth={nodeMinWidth}
           setNodeMinWidth={setNodeMinWidth}
           nodeMinWidthDefault={NODE_MIN_WIDTH_DEFAULT}
@@ -1054,6 +1158,9 @@ export default function App() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onEdgeClick={(event, edge) => {
+              if (compactingNodeIds.has(edge.source) || compactingNodeIds.has(edge.target)) {
+                return;
+              }
               if (!applyFoldForEdge(edge)) {
                 return;
               }
@@ -1064,6 +1171,9 @@ export default function App() {
               if ("button" in event && event.button !== 0) {
                 return;
               }
+              if ((node.data as GraphNodeUiData).compacting) {
+                return;
+              }
               if (node.type === "collapsedNode") {
                 return;
               }
@@ -1071,6 +1181,9 @@ export default function App() {
               setNodeContextMenuNodeId(null);
             }}
             onNodeDoubleClick={(event, node) => {
+              if ((node.data as GraphNodeUiData).compacting) {
+                return;
+              }
               const target = event.target;
               if (target instanceof Element && target.closest('[data-node-text-content="true"]')) {
                 return;
@@ -1252,6 +1365,7 @@ export default function App() {
       <div className="row-start-3 md:col-start-2 md:row-start-3">
         <ComposerBar
         selectedNodeId={selectedNodeId}
+        selectedNodePending={selectedNode?.data.pending === true}
         showFullSelectedNodeId={showFullSelectedNodeId}
         composerText={composerText}
         loading={loading}

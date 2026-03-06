@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_session_id
 from app.db.session import get_db
-from app.schemas.message import ExtractPathResponse, UpdateVariantRequest
+from app.schemas.message import CompactBranchRequest, CompactBranchResponse, ExtractPathResponse, UpdateVariantRequest
 from app.services.errors import InvalidNodeRoleError, NodeNotFoundError, VariantLockedError
-from app.services.node_service import delete_node_subtree, extract_path_to_new_tree, update_variant_index
+from app.services.node_service import compact_node_subtree, delete_node_subtree, extract_path_to_new_tree, update_variant_index
+from app.services.session_keys import get_api_key
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
@@ -48,3 +50,30 @@ def extract_path_endpoint(
     except NodeNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ExtractPathResponse(created_nodes=nodes, created_edges=edges)
+
+
+@router.post("/{node_id}/compact", response_model=CompactBranchResponse)
+def compact_branch_endpoint(
+    node_id: str,
+    payload: CompactBranchRequest,
+    db: Session = Depends(get_db),
+    session_id: str = Depends(get_session_id),
+) -> CompactBranchResponse:
+    runtime_key = get_api_key(session_id)
+    try:
+        graph, source, compacted_node_id = compact_node_subtree(
+            db=db,
+            node_id=node_id,
+            runtime_api_key=runtime_key,
+            selected_model=payload.selected_model,
+        )
+    except NodeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CompactBranchResponse(
+        graph_id=graph.graph_id,
+        title=graph.title,
+        nodes=graph.nodes,
+        edges=graph.edges,
+        response_source=source,
+        compacted_node_id=compacted_node_id,
+    )

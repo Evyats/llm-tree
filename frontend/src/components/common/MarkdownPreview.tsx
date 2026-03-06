@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { normalizeMarkdownText } from "../../features/markdown/normalize";
 
 interface MarkdownPreviewProps {
@@ -114,12 +116,29 @@ export default function MarkdownPreview({ text, highlights, className }: Markdow
   return (
     <div className={className}>
       <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={highlightPlugin ? [highlightPlugin] : []}
         components={{
+          h1: ({ children }) => <h1 className="my-1 text-lg font-semibold leading-snug">{children}</h1>,
+          h2: ({ children }) => <h2 className="my-1 text-base font-semibold leading-snug">{children}</h2>,
+          h3: ({ children }) => <h3 className="my-1 text-sm font-semibold leading-snug">{children}</h3>,
+          h4: ({ children }) => <h4 className="my-1 text-sm font-medium leading-snug">{children}</h4>,
+          h5: ({ children }) => <h5 className="my-1 text-xs font-medium uppercase tracking-wide">{children}</h5>,
+          h6: ({ children }) => <h6 className="my-1 text-xs font-medium uppercase tracking-wide text-stone-500">{children}</h6>,
           p: ({ children }) => <p className="my-0">{children}</p>,
           ul: ({ children }) => <ul className="my-0 list-disc pl-5">{children}</ul>,
           ol: ({ children }) => <ol className="my-0 list-decimal pl-5">{children}</ol>,
           li: ({ children }) => <li className="my-0.5">{children}</li>,
+          table: ({ children }) => (
+            <div className="my-1 overflow-x-auto">
+              <table className="w-full border-collapse text-left text-sm">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-stone-100">{children}</thead>,
+          tbody: ({ children }) => <tbody>{children}</tbody>,
+          tr: ({ children }) => <tr className="border-b border-stone-200 last:border-b-0">{children}</tr>,
+          th: ({ children }) => <th className="border border-stone-200 px-2 py-1 font-semibold">{children}</th>,
+          td: ({ children }) => <td className="border border-stone-200 px-2 py-1 align-top">{children}</td>,
           code: ({ children }) => (
             <code className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[0.92em] text-stone-800">{children}</code>
           ),

@@ -1,5 +1,5 @@
-import { memo, useRef, type MouseEvent, type PointerEvent } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { memo, useLayoutEffect, useRef, type MouseEvent, type PointerEvent } from "react";
+import { Handle, Position, type NodeProps, useUpdateNodeInternals } from "reactflow";
 
 import { estimateNodeFrame } from "../features/layout/nodeSizing";
 import type { GraphNodeUiData } from "../features/graph/nodeUi";
@@ -12,6 +12,7 @@ const ACTION_RAIL_EXPANDED_WIDTH = 44;
 
 function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const updateNodeInternals = useUpdateNodeInternals();
   const wheelEligible = !data.variantLocked && !!data.variants;
   const canCycleVariants = !data.pending && !data.variantLocked && !!data.variants;
   const minControlsContentWidth = canCycleVariants ? 300 : 120;
@@ -48,6 +49,25 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
     }
   };
 
+  useLayoutEffect(() => {
+    updateNodeInternals(id);
+    const raf = requestAnimationFrame(() => updateNodeInternals(id));
+    const timeout = window.setTimeout(() => updateNodeInternals(id), 80);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+    };
+  }, [
+    data.contextMenuOpen,
+    data.pending,
+    data.sizingSignature,
+    data.text,
+    data.variantIndex,
+    data.variantLocked,
+    id,
+    updateNodeInternals,
+  ]);
+
   return (
     <div
       onMouseEnter={() => {
@@ -73,7 +93,7 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
       }}
       className={`rounded-2xl border bg-white px-4 py-3 shadow-float transition-all duration-300 ${
         selected ? "border-accent" : "border-stone-300"
-      }`}
+      } ${data.compacting ? "pointer-events-none opacity-45 saturate-50" : ""}`}
       style={{
         width: size.width + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0),
         minHeight: size.minHeight,
@@ -214,7 +234,7 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                data.onPlaceholderTwo?.();
+                data.onExtractPath?.(id);
               }}
               title="Extract path"
               aria-label="Extract path"
@@ -223,6 +243,25 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
                 <path d="M6 4v5a3 3 0 0 0 3 3h5" strokeLinecap="round" />
                 <path d="M14 12l-2-2m2 2l-2 2" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M4 4h2M4 16h2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              data-node-action-button="true"
+              className="nodrag nopan flex h-7 w-7 items-center justify-center rounded text-stone-700 hover:bg-stone-100"
+              onMouseDown={stopActionPointer}
+              onPointerDown={stopActionPointer}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                data.onCompactBranch?.(id);
+              }}
+              title="Compact branch"
+              aria-label="Compact branch"
+            >
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M4 6h8M4 10h8M4 14h8" strokeLinecap="round" />
+                <path d="M14 5l2 2-2 2M14 9l2 2-2 2M14 13l2 2-2 2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
           </div>

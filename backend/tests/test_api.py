@@ -295,3 +295,52 @@ def test_extract_path_creates_new_disconnected_chain(client: TestClient) -> None
     all_ids = {node["id"] for node in graph["nodes"]}
     for node in created_nodes:
         assert node["id"] in all_ids
+
+
+def test_compact_branch_replaces_subtree_with_summary_node(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Compact branch"}).json()["graph_id"]
+    first = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "root",
+            "mode": "normal",
+        },
+    ).json()
+    root_assistant = first["created_assistant_node"]["id"]
+    second = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": root_assistant,
+            "user_text": "branch a",
+            "mode": "normal",
+        },
+    ).json()
+    branch_user = second["created_user_node"]["id"]
+    _ = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": root_assistant,
+            "user_text": "branch b",
+            "mode": "normal",
+        },
+    ).json()
+
+    compacted = client.post(f"/api/nodes/{branch_user}/compact", json={"selected_model": "fallback"})
+    assert compacted.status_code == 200
+    payload = compacted.json()
+    assert payload["response_source"] == "fallback"
+    assert payload["compacted_node_id"]
+
+    graph = client.get(f"/api/graphs/{graph_id}").json()
+    node_ids = {node["id"] for node in graph["nodes"]}
+    assert branch_user not in node_ids
+    assert payload["compacted_node_id"] in node_ids
+
+    summary_node = next(node for node in graph["nodes"] if node["id"] == payload["compacted_node_id"])
+    assert summary_node["role"] == "assistant"
+    assert summary_node["parent_id"] == root_assistant
+    assert summary_node["variants"]["medium"]

@@ -1,11 +1,12 @@
-import { memo } from "react";
-import { Handle, Position, type NodeProps } from "reactflow";
+import { memo, useLayoutEffect } from "react";
+import { Handle, Position, type NodeProps, useUpdateNodeInternals } from "reactflow";
 
 interface CollapsedNodeData {
   label: string;
   previewText: string;
   hiddenCount: number;
   onUnfold: () => void;
+  compacting?: boolean;
   contextMenuOpen?: boolean;
   onDeleteBranch?: (nodeId: string) => void;
   onToggleContextMenu?: (nodeId: string) => void;
@@ -14,6 +15,18 @@ interface CollapsedNodeData {
 const ACTION_RAIL_EXPANDED_WIDTH = 44;
 
 function CollapsedNode({ id, data, selected }: NodeProps<CollapsedNodeData>) {
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useLayoutEffect(() => {
+    updateNodeInternals(id);
+    const raf = requestAnimationFrame(() => updateNodeInternals(id));
+    const timeout = window.setTimeout(() => updateNodeInternals(id), 80);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+    };
+  }, [data.contextMenuOpen, data.hiddenCount, data.previewText, id, updateNodeInternals]);
+
   return (
     <div
       onDoubleClick={(event) => {
@@ -28,7 +41,7 @@ function CollapsedNode({ id, data, selected }: NodeProps<CollapsedNodeData>) {
       }}
       className={`rounded-xl border px-3 py-2 shadow-float ${
         selected ? "border-accent bg-amber-50" : "border-amber-400 bg-amber-50"
-      }`}
+      } ${data.compacting ? "pointer-events-none opacity-45 saturate-50" : ""}`}
       style={{ width: 132 + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0) }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />

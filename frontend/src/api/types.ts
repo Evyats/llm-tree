@@ -1,3 +1,5 @@
+import type { GraphEdgePayload, GraphNodePayload } from "../types/graph";
+
 export interface ChatSummary {
   graph_id: string;
   title: string;
@@ -24,4 +26,13 @@ export interface ContinueInPanelRequest {
 
 export interface AvailableModelsResponse {
   models: string[];
+}
+
+export interface CompactBranchResponse {
+  graph_id: string;
+  title: string;
+  nodes: GraphNodePayload[];
+  edges: GraphEdgePayload[];
+  response_source: "live" | "fallback";
+  compacted_node_id: string;
 }
