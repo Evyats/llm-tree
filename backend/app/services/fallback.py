@@ -52,3 +52,23 @@ def fallback_tree_summary_variants(tree_summary: dict) -> Variants:
 def fallback_chat_title(first_user_text: str | None) -> str:
     _ = first_user_text
     return "AI Generated Header"
+
+
+def fallback_revised_user_selection(message_text: str, selected_text: str) -> str:
+    _ = message_text
+    normalized = " ".join(selected_text.split())
+    replacements = {
+        "teh": "the",
+        "adn": "and",
+        "recieve": "receive",
+        "seperate": "separate",
+    }
+    lowered = normalized.lower()
+    if lowered in replacements:
+        replacement = replacements[lowered]
+        if normalized.isupper():
+            return replacement.upper()
+        if normalized[:1].isupper():
+            return replacement.capitalize()
+        return replacement
+    return normalized or selected_text

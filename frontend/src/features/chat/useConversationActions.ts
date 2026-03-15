@@ -12,6 +12,7 @@ import {
   removeOptimisticBranch,
   reconcileOptimisticBranch,
 } from "./optimisticBranch";
+import { buildTranscriptUntilNode } from "./transcript";
 
 interface UseConversationActionsParams {
   graphId: string | null;
@@ -42,6 +43,7 @@ interface UseConversationActionsParams {
   startLlmTask: (label: string) => string;
   finishLlmTask: (taskId: string | null) => void;
   maybeAutoNameGraph: (nextNodes: Node<NodeData>[]) => Promise<void>;
+  centerNodeInView: (nodeId: string, duration?: number) => void;
 }
 
 export function useConversationActions({
@@ -73,6 +75,7 @@ export function useConversationActions({
   startLlmTask,
   finishLlmTask,
   maybeAutoNameGraph,
+  centerNodeInView,
 }: UseConversationActionsParams) {
   const requestCountRef = useRef(0);
   const modelRequestCountRef = useRef(0);
@@ -212,6 +215,11 @@ export function useConversationActions({
         setNodes(optimistic.nodes);
         setEdges(optimistic.edges);
         setSelectedNode(optimistic.ids.tempAssistantId);
+        if (continueFromNodeId) {
+          requestAnimationFrame(() => {
+            centerNodeInView(continueFromNodeId);
+          });
+        }
         const response = await continueFromNode({
           graph_id: graphId,
           continue_from_node_id: continueFromNodeId,
@@ -277,7 +285,8 @@ export function useConversationActions({
         setSelectedNode,
         startLlmTask,
         setTranscript,
-        maybeAutoNameGraph,
+      maybeAutoNameGraph,
+      centerNodeInView,
         waitForFallbackDelay,
         pruneAssistantVariantsInNodes,
     ]
@@ -303,6 +312,7 @@ export function useConversationActions({
     const baseX = anchorPos?.x ?? 0;
     const baseY = (anchorPos?.y ?? 80) + 170;
     const userText = panelText.trim();
+    const previousTranscript = buildTranscriptUntilNode(baseNodes, persistedAnchorNodeId);
     const optimistic = buildOptimisticBranch(
       baseNodes,
       baseEdges,
@@ -329,6 +339,16 @@ export function useConversationActions({
       setNodes(optimistic.nodes);
       setEdges(optimistic.edges);
       setSelectedNode(optimistic.ids.tempAssistantId);
+      requestAnimationFrame(() => {
+        centerNodeInView(persistedAnchorNodeId);
+      });
+      setTranscript([
+        ...previousTranscript,
+        {
+          role: "user",
+          content: userText,
+        },
+      ]);
       const response = await continueInPanel({
         graph_id: graphId,
         anchor_node_id: persistedAnchorNodeId,
@@ -358,6 +378,7 @@ export function useConversationActions({
           panelTextRef.current = previousPanelText;
           setPanelText(previousPanelText);
         }
+        setTranscript(previousTranscript);
         setError(toErrorMessage(err, "Failed to continue in panel"));
       }
     } finally {
@@ -392,6 +413,7 @@ export function useConversationActions({
     startLlmTask,
     setTranscript,
     maybeAutoNameGraph,
+    centerNodeInView,
     waitForFallbackDelay,
     pruneAssistantVariantsInNodes,
   ]);

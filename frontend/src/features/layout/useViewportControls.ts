@@ -89,8 +89,30 @@ export function useViewportControls({
     [mainElement, maxZoom, minZoom, reactFlowInstance]
   );
 
+  const centerNodeInView = useCallback(
+    (nodeId: string, duration = 560) => {
+      if (!reactFlowInstance) return;
+      const node = reactFlowInstance.getNode(nodeId);
+      if (!node) return;
+      const zoom = reactFlowInstance.getZoom();
+      const { width, height } = getCanvasSize(mainElement);
+      const targetX = width / 2 - node.position.x * zoom;
+      const targetY = height * 0.2 - node.position.y * zoom;
+      void reactFlowInstance.setViewport(
+        {
+          x: targetX,
+          y: targetY,
+          zoom,
+        },
+        { duration },
+      );
+    },
+    [mainElement, reactFlowInstance],
+  );
+
   return {
     fitCanvasToGraph,
+    centerNodeInView,
     zoomIn: (factor: number) => zoomByFactor(factor),
     zoomOut: (factor: number) => zoomByFactor(1 / factor),
   };

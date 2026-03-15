@@ -6,7 +6,12 @@ from openai import OpenAI
 
 from app.core.config import get_settings
 from app.schemas.common import Variants
-from app.services.fallback import fallback_chat_title, fallback_tree_summary_variants, fallback_variants
+from app.services.fallback import (
+    fallback_chat_title,
+    fallback_revised_user_selection,
+    fallback_tree_summary_variants,
+    fallback_variants,
+)
 from app.services.llm_prompt import build_messages
 from app.services.llm_schema import build_request_body
 
@@ -212,3 +217,72 @@ def generate_chat_title(
     except Exception as exc:
         logger.warning("OPENAI_CALL_FAILED using=fallback error=%s", repr(exc))
         return fallback_chat_title(first_user_text), "fallback"
+
+
+def revise_user_selection(
+    message_text: str,
+    selected_text: str,
+    runtime_api_key: str | None,
+    selected_model: str | None = None,
+) -> tuple[str, Literal["live", "fallback"]]:
+    settings = get_settings()
+    api_key = runtime_api_key or settings.openai_api_key
+    available_models = settings.parsed_openai_models
+    normalized_model = (selected_model or "").strip()
+    force_fallback = normalized_model == "" or normalized_model == "fallback"
+    chosen_model = (
+        normalized_model
+        if normalized_model in available_models
+        else (available_models[0] if available_models else None)
+    )
+    if normalized_model and normalized_model not in {"fallback", *available_models}:
+        logger.warning("MODEL_SELECTION_INVALID selected=%s available=%s", normalized_model, available_models)
+
+    if force_fallback or not api_key or not chosen_model:
+        return fallback_revised_user_selection(message_text, selected_text), "fallback"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Revise only the selected span from a user-written message. "
+                "Correct spelling, grammar, punctuation, and awkward wording while preserving meaning. "
+                "Use the full message only as context. Return only the revised replacement text for the selected span. "
+                "Do not return quotes, explanations, markdown, or the full message."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Full message:\n{message_text}\n\n"
+                f"Selected span to revise:\n{selected_text}"
+            ),
+        },
+    ]
+    logger.info(
+        "OPENAI_REQUEST_BODY %s",
+        json.dumps(
+            {
+                "has_api_key": bool(api_key),
+                "mode": "revise-user-selection",
+                "selected_model": normalized_model or "fallback",
+                "request_body": {"model": chosen_model, "messages": messages},
+            },
+            ensure_ascii=False,
+        ),
+    )
+    try:
+        client = OpenAI(api_key=api_key, timeout=settings.openai_timeout_seconds)
+        response = client.chat.completions.create(
+            model=chosen_model,
+            temperature=0.1,
+            messages=messages,
+        )
+        revised = (response.choices[0].message.content or "").strip().strip("\"' \n\t")
+        revised = " ".join(revised.split())
+        if not revised:
+            return fallback_revised_user_selection(message_text, selected_text), "fallback"
+        return revised, "live"
+    except Exception as exc:
+        logger.warning("OPENAI_CALL_FAILED using=fallback error=%s", repr(exc))
+        return fallback_revised_user_selection(message_text, selected_text), "fallback"

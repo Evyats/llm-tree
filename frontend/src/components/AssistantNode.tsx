@@ -286,27 +286,6 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
             <button
               type="button"
               data-node-action-button="true"
-              className="nodrag nopan flex h-7 w-7 items-center justify-center rounded text-red-700 hover:bg-red-50"
-              onMouseDown={stopActionPointer}
-              onPointerDown={stopActionPointer}
-              onMouseEnter={() => data.onActionPreviewStart?.(id, "delete")}
-              onMouseLeave={() => data.onActionPreviewEnd?.()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                data.onActionPreviewEnd?.();
-                data.onDeleteBranch?.(id);
-              }}
-              title="Delete branch"
-              aria-label="Delete branch"
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M4 6h12M8 6V4h4v2M7 6l.6 9h4.8L13 6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              data-node-action-button="true"
               className="nodrag nopan flex h-7 w-7 items-center justify-center rounded text-stone-700 hover:bg-stone-100"
               onMouseDown={stopActionPointer}
               onPointerDown={stopActionPointer}
@@ -324,6 +303,27 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
               <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M4 6h8M4 10h8M4 14h8" strokeLinecap="round" />
                 <path d="M14 5l2 2-2 2M14 9l2 2-2 2M14 13l2 2-2 2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              data-node-action-button="true"
+              className="nodrag nopan flex h-7 w-7 items-center justify-center rounded text-red-700 hover:bg-red-50"
+              onMouseDown={stopActionPointer}
+              onPointerDown={stopActionPointer}
+              onMouseEnter={() => data.onActionPreviewStart?.(id, "delete")}
+              onMouseLeave={() => data.onActionPreviewEnd?.()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                data.onActionPreviewEnd?.();
+                data.onDeleteBranch?.(id);
+              }}
+              title="Delete branch"
+              aria-label="Delete branch"
+            >
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M4 6h12M8 6V4h4v2M7 6l.6 9h4.8L13 6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
           </div>

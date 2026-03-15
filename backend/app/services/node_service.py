@@ -11,7 +11,7 @@ from app.schemas.graph import GraphResponse
 from app.services.context import node_display_text
 from app.services.errors import InvalidNodeRoleError, NodeNotFoundError, VariantLockedError
 from app.services.graph_state import parse_graph_collapsed_state
-from app.services.llm import generate_tree_summary_variants
+from app.services.llm import generate_tree_summary_variants, revise_user_selection
 from app.services.layout import Y_STEP
 from app.services.payloads import to_edge_payload, to_node_payload
 from app.services.variant_retention import prune_assistant_variants
@@ -217,6 +217,38 @@ def compact_node_subtree(
     return response, source, summary_node.id
 
 
+def revise_user_node_selection(
+    db: Session,
+    node_id: str,
+    selected_text: str,
+    occurrence: int,
+    runtime_api_key: str | None,
+    selected_model: str | None,
+) -> tuple[NodePayload, str]:
+    node = db.get(Node, node_id)
+    if node is None:
+        raise NodeNotFoundError("Node not found")
+    if node.role != "user":
+        raise InvalidNodeRoleError("Only user nodes support text revision")
+
+    message_text = node.user_text or ""
+    revised_text, source = revise_user_selection(
+        message_text=message_text,
+        selected_text=selected_text,
+        runtime_api_key=runtime_api_key,
+        selected_model=selected_model,
+    )
+    node.user_text = _replace_selected_occurrence(message_text, selected_text, revised_text, occurrence)
+
+    graph = db.get(Graph, node.graph_id)
+    if graph is not None:
+        graph.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(node)
+    return to_node_payload(node), source
+
+
 def _build_tree_summary(root: Node, children_by_parent: dict[str, list[Node]]) -> dict:
     branch_count = 0
     leaf_count = 0
@@ -245,3 +277,18 @@ def _build_tree_summary(root: Node, children_by_parent: dict[str, list[Node]]) -
         "leaf_count": leaf_count,
         "tree": tree,
     }
+
+
+def _replace_selected_occurrence(full_text: str, selected_text: str, replacement: str, occurrence: int) -> str:
+    if selected_text == "":
+        raise ValueError("Selected text cannot be empty")
+
+    start = 0
+    found_index = -1
+    for _ in range(occurrence + 1):
+        found_index = full_text.find(selected_text, start)
+        if found_index < 0:
+            raise ValueError("Selected text occurrence was not found in the node")
+        start = found_index + len(selected_text)
+
+    return f"{full_text[:found_index]}{replacement}{full_text[found_index + len(selected_text):]}"

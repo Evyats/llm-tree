@@ -49,6 +49,17 @@ class CompactBranchResponse(BaseModel):
     compacted_node_id: str
 
 
+class ReviseSelectedTextRequest(BaseModel):
+    selected_text: str = Field(min_length=1)
+    occurrence: int = Field(ge=0)
+    selected_model: str | None = None
+
+
+class ReviseSelectedTextResponse(BaseModel):
+    updated_node: NodePayload
+    response_source: Literal["live", "fallback"]
+
+
 class SetApiKeyRequest(BaseModel):
     api_key: str = Field(min_length=10)
 

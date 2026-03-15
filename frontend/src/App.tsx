@@ -22,6 +22,7 @@ import {
   getGraph,
   lockVariant,
   listAvailableModels,
+  reviseSelectedText,
   setSessionApiKey,
   updateGraphCollapsedState,
   updateVariant,
@@ -90,6 +91,7 @@ import { useGraphStore, type NodeData } from "./store/useGraphStore";
 
 interface ElaborateAction {
   nodeId: string;
+  role: "user" | "assistant";
   text: string;
   occurrence: number;
   x: number;
@@ -331,7 +333,7 @@ export default function App() {
     }
   }, [nodes]);
 
-  const { fitCanvasToGraph, zoomIn, zoomOut } = useViewportControls({
+  const { fitCanvasToGraph, centerNodeInView, zoomIn, zoomOut } = useViewportControls({
     reactFlowInstance,
     mainElement: mainRef.current,
     fitViewPadding,
@@ -829,6 +831,7 @@ export default function App() {
     startLlmTask,
     finishLlmTask,
     maybeAutoNameGraph,
+    centerNodeInView,
   });
 
   const handleDeleteNodeSubtree = useCallback(
@@ -959,6 +962,56 @@ export default function App() {
         startLlmTask,
       ]
     );
+
+  const handleReviseSelectedText = useCallback(
+    async (action: ElaborateAction) => {
+      if (!graphId || action.role !== "user") {
+        return;
+      }
+
+      let llmTaskId: string | null = null;
+      setLoading(true);
+      setError(null);
+      try {
+        llmTaskId = startLlmTask("Revising selected text");
+        const response = await reviseSelectedText(action.nodeId, action.text, action.occurrence, selectedModel);
+        if (selectedModel === "fallback" && fallbackDelayMs > 0) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, fallbackDelayMs));
+        }
+        const nextNodes = nodesRef.current.map((node) =>
+          node.id === response.updated_node.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  text: response.updated_node.text,
+                },
+              }
+            : node
+        );
+        nodesRef.current = nextNodes;
+        setNodes(nextNodes);
+        setResponseSource(response.response_source);
+        setElaborateAction(null);
+        await refreshGraphList();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to revise selected text");
+      } finally {
+        finishLlmTask(llmTaskId);
+        setLoading(false);
+      }
+    },
+    [
+      fallbackDelayMs,
+      finishLlmTask,
+      graphId,
+      refreshGraphList,
+      selectedModel,
+      setNodes,
+      setResponseSource,
+      startLlmTask,
+    ],
+  );
 
   const openContextPanelForNode = useCallback(
     async (nodeId: string) => {
@@ -1193,7 +1246,7 @@ export default function App() {
               onCycleVariant: cycleVariant,
               onApproveVariant: approveVariant,
           onSelectElaboration: (nodeId: string, text: string, occurrence: number, x: number, y: number) => {
-            setElaborateAction({ nodeId, text, occurrence, x, y });
+            setElaborateAction({ nodeId, role: node.data.role, text, occurrence, x, y });
           },
           onOpenPanel: (nodeId: string) => {
             if (panelOpen && panelAnchorNodeId === nodeId) {
@@ -1645,6 +1698,9 @@ export default function App() {
           nodesRef.current = nextNodes;
           setSelectedNode(action.nodeId);
           void sendContinue("elaboration", action.text);
+        }}
+        onReviseClick={(action) => {
+          void handleReviseSelectedText(action);
         }}
         onClose={() => setElaborateAction(null)}
       />

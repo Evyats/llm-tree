@@ -463,3 +463,54 @@ def test_generate_graph_title_uses_short_title_and_returns_source(client: TestCl
     assert payload["response_source"] == "fallback"
     assert isinstance(payload["title"], str)
     assert payload["title"]
+
+
+def test_revise_selected_user_text_replaces_only_target_occurrence(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Revise text"}).json()["graph_id"]
+    created = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "teh start and teh end",
+            "mode": "normal",
+        },
+    ).json()
+    user_node_id = created["created_user_node"]["id"]
+
+    response = client.post(
+        f"/api/nodes/{user_node_id}/revise-selected-text",
+        json={
+            "selected_text": "teh",
+            "occurrence": 1,
+            "selected_model": "fallback",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["response_source"] == "fallback"
+    assert payload["updated_node"]["text"] == "teh start and the end"
+
+
+def test_revise_selected_text_rejects_assistant_nodes(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Revise role"}).json()["graph_id"]
+    created = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "hello",
+            "mode": "normal",
+        },
+    ).json()
+    assistant_node_id = created["created_assistant_node"]["id"]
+
+    response = client.post(
+        f"/api/nodes/{assistant_node_id}/revise-selected-text",
+        json={
+            "selected_text": "This",
+            "occurrence": 0,
+            "selected_model": "fallback",
+        },
+    )
+    assert response.status_code == 400

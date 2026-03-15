@@ -1,5 +1,5 @@
 import type { GraphEdgePayload, GraphNodePayload } from "../../types/graph";
-import type { CompactBranchResponse } from "../types";
+import type { CompactBranchResponse, ReviseSelectedTextResponse } from "../types";
 import { request } from "../http";
 
 export async function updateVariant(nodeId: string, variantIndex: number): Promise<void> {
@@ -35,5 +35,21 @@ export async function compactBranch(nodeId: string, selectedModel: string): Prom
   return request(`/api/nodes/${nodeId}/compact`, {
     method: "POST",
     body: JSON.stringify({ selected_model: selectedModel }),
+  });
+}
+
+export async function reviseSelectedText(
+  nodeId: string,
+  selectedText: string,
+  occurrence: number,
+  selectedModel: string,
+): Promise<ReviseSelectedTextResponse> {
+  return request(`/api/nodes/${nodeId}/revise-selected-text`, {
+    method: "POST",
+    body: JSON.stringify({
+      selected_text: selectedText,
+      occurrence,
+      selected_model: selectedModel,
+    }),
   });
 }

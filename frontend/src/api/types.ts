@@ -45,3 +45,8 @@ export interface CompactBranchResponse {
   response_source: "live" | "fallback";
   compacted_node_id: string;
 }
+
+export interface ReviseSelectedTextResponse {
+  updated_node: GraphNodePayload;
+  response_source: "live" | "fallback";
+}

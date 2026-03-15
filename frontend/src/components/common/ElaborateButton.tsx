@@ -2,8 +2,9 @@ import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type PointerEven
 
 interface ElaborateAction {
   nodeId: string;
+  role: "user" | "assistant";
   text: string;
-  occurrence?: number;
+  occurrence: number;
   x: number;
   y: number;
 }
@@ -11,11 +12,13 @@ interface ElaborateAction {
 interface ElaborateButtonProps {
   action: ElaborateAction | null;
   onElaborateClick: (action: ElaborateAction) => void;
+  onReviseClick: (action: ElaborateAction) => void;
   onClose: () => void;
 }
 
-export default function ElaborateButton({ action, onElaborateClick, onClose }: ElaborateButtonProps) {
+export default function ElaborateButton({ action, onElaborateClick, onReviseClick, onClose }: ElaborateButtonProps) {
   const popupRef = useRef<HTMLDivElement>(null);
+  const isAssistantAction = action?.role === "assistant";
 
   const preserveSelection = (event: ReactMouseEvent | ReactPointerEvent) => {
     event.preventDefault();
@@ -51,15 +54,27 @@ export default function ElaborateButton({ action, onElaborateClick, onClose }: E
       onMouseDown={preserveSelection}
       onPointerDown={preserveSelection}
     >
-      <button
-        className="rounded bg-warm px-2 py-1 text-xs text-white hover:opacity-90"
-        onClick={() => onElaborateClick(action)}
-        type="button"
-        onMouseDown={preserveSelection}
-        onPointerDown={preserveSelection}
-      >
-        Elaborate
-      </button>
+      {isAssistantAction ? (
+        <button
+          className="rounded bg-warm px-2 py-1 text-xs text-white hover:opacity-90"
+          onClick={() => onElaborateClick(action)}
+          type="button"
+          onMouseDown={preserveSelection}
+          onPointerDown={preserveSelection}
+        >
+          Elaborate
+        </button>
+      ) : (
+        <button
+          className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 hover:bg-stone-300"
+          onClick={() => onReviseClick(action)}
+          type="button"
+          onMouseDown={preserveSelection}
+          onPointerDown={preserveSelection}
+        >
+          Revise
+        </button>
+      )}
       <button
         className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 hover:bg-stone-300"
         type="button"

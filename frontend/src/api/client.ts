@@ -10,5 +10,12 @@ export {
   updateGraphCollapsedState,
 } from "./modules/graphsApi";
 export { continueFromNode, listAvailableModels } from "./modules/messagesApi";
-export { compactBranch, deleteNodeSubtree, extractNodePath, lockVariant, updateVariant } from "./modules/nodesApi";
+export {
+  compactBranch,
+  deleteNodeSubtree,
+  extractNodePath,
+  lockVariant,
+  reviseSelectedText,
+  updateVariant,
+} from "./modules/nodesApi";
 export { setSessionApiKey } from "./modules/sessionApi";
