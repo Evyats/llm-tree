@@ -49,12 +49,9 @@ function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
   };
 
   useLayoutEffect(() => {
-    updateNodeInternals(id);
     const raf = requestAnimationFrame(() => updateNodeInternals(id));
-    const timeout = window.setTimeout(() => updateNodeInternals(id), 80);
     return () => {
       cancelAnimationFrame(raf);
-      window.clearTimeout(timeout);
     };
   }, [data.contextMenuOpen, data.sizingSignature, data.text, id, updateNodeInternals]);
 
@@ -71,7 +68,7 @@ function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
       style={{
         width: baseWidth + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0),
         minHeight: size.minHeight,
-        transition: "width 260ms ease, border-color 200ms ease",
+        transition: "border-color 200ms ease",
       }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />

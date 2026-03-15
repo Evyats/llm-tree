@@ -25,11 +25,11 @@ body,
 }
 
 .fixed-layout-animated .react-flow__node {
-  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 180ms ease-out;
 }
 
 .fixed-layout-animated .react-flow__edge-path {
-  transition: d 420ms cubic-bezier(0.22, 1, 0.36, 1), stroke-opacity 220ms ease;
+  transition: d 180ms ease-out, stroke-opacity 180ms ease;
 }
 
 .react-flow__node-collapsedNode {

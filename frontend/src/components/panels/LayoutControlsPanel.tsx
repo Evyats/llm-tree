@@ -59,6 +59,8 @@ interface LayoutControlsPanelProps {
   setAssistantEdgeLineStyle: (value: EdgeLineStyleValue) => void;
   actionPreviewStyle: ActionPreviewStyle;
   setActionPreviewStyle: (value: ActionPreviewStyle) => void;
+  showCanvasGrid: boolean;
+  setShowCanvasGrid: (value: boolean) => void;
 }
 
 export default function LayoutControlsPanel({
@@ -110,6 +112,8 @@ export default function LayoutControlsPanel({
   setAssistantEdgeLineStyle,
   actionPreviewStyle,
   setActionPreviewStyle,
+  showCanvasGrid,
+  setShowCanvasGrid,
 }: LayoutControlsPanelProps) {
   if (!visible) return null;
 
@@ -250,6 +254,22 @@ export default function LayoutControlsPanel({
                 />
               </label>
               <div className="pt-1">
+                <div className="mb-2 flex items-center justify-between rounded border border-stone-200 bg-white/70 px-2 py-1.5">
+                  <div className="text-[11px] text-stone-700">
+                    Canvas grid: <span className="font-semibold">{showCanvasGrid ? "On" : "Off"}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-[10px] leading-none ${
+                      showCanvasGrid
+                        ? "border border-accent/40 bg-accent/20 text-accent"
+                        : "border border-transparent bg-stone-200 text-stone-700 hover:bg-stone-300"
+                    }`}
+                    onClick={() => setShowCanvasGrid(!showCanvasGrid)}
+                  >
+                    Toggle
+                  </button>
+                </div>
                 <div className="mb-1 text-[11px] text-stone-700">
                   Action hover preview: <span className="font-semibold capitalize">{actionPreviewStyle}</span>
                 </div>

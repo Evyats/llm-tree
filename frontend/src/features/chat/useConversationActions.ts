@@ -215,11 +215,6 @@ export function useConversationActions({
         setNodes(optimistic.nodes);
         setEdges(optimistic.edges);
         setSelectedNode(optimistic.ids.tempAssistantId);
-        if (continueFromNodeId) {
-          requestAnimationFrame(() => {
-            centerNodeInView(continueFromNodeId);
-          });
-        }
         const response = await continueFromNode({
           graph_id: graphId,
           continue_from_node_id: continueFromNodeId,
@@ -237,6 +232,14 @@ export function useConversationActions({
         setNodes(pruneAssistantVariantsInNodes(next.nodes, continueFromNodeId));
         setEdges(next.edges);
         setSelectedNode(response.created_assistant_node.id);
+        if (mode !== "elaboration") {
+          const targetNodeId = continueFromNodeId ?? response.created_user_node.id;
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              centerNodeInView(targetNodeId);
+            });
+          });
+        }
         setResponseSource(response.response_source);
         setTranscript(response.transcript_window);
         clearElaborateAction();
@@ -339,9 +342,6 @@ export function useConversationActions({
       setNodes(optimistic.nodes);
       setEdges(optimistic.edges);
       setSelectedNode(optimistic.ids.tempAssistantId);
-      requestAnimationFrame(() => {
-        centerNodeInView(persistedAnchorNodeId);
-      });
       setTranscript([
         ...previousTranscript,
         {
@@ -365,6 +365,11 @@ export function useConversationActions({
       setEdges(next.edges);
       setPanelAnchorNodeId(response.created_assistant_node.id);
       setSelectedNode(response.created_assistant_node.id);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          centerNodeInView(persistedAnchorNodeId);
+        });
+      });
       setTranscript(response.transcript_window);
       setResponseSource(response.response_source);
       await maybeAutoNameGraph(next.nodes);

@@ -24,12 +24,9 @@ function CollapsedNode({ id, data, selected }: NodeProps<CollapsedNodeData>) {
   const actionPreviewClass = getActionPreviewClasses(!!data.actionPreviewActive, data.actionPreviewStyle ?? "outline");
 
   useLayoutEffect(() => {
-    updateNodeInternals(id);
     const raf = requestAnimationFrame(() => updateNodeInternals(id));
-    const timeout = window.setTimeout(() => updateNodeInternals(id), 80);
     return () => {
       cancelAnimationFrame(raf);
-      window.clearTimeout(timeout);
     };
   }, [data.contextMenuOpen, data.hiddenCount, data.previewText, id, updateNodeInternals]);
 

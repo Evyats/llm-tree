@@ -40,6 +40,7 @@ export interface FixedLayoutOptions {
   rowGap?: number;
   treeGap?: number;
   siblingGap?: number;
+  preferredAnchorNodeId?: string | null;
 }
 
 function buildChildrenMap(nodes: Node<NodeData>[]) {
@@ -192,6 +193,7 @@ export function buildFixedPositions(
   const rowGap = options?.rowGap ?? FIXED_ROW_GAP;
   const treeGap = options?.treeGap ?? FIXED_TREE_GAP;
   const siblingGap = options?.siblingGap ?? FIXED_MIN_COL_GAP;
+  const preferredAnchorNodeId = options?.preferredAnchorNodeId ?? null;
   const meta = buildStructureMeta(nodes);
   const childrenByParent = buildChildrenMap(nodes);
   const positions = new Map<string, Position>();
@@ -371,6 +373,9 @@ export function buildFixedPositions(
         targetById.set(node.id, (meta.get(node.id)?.baseX ?? 0) * FIXED_X_STEP);
         anchorById.set(node.id, false);
       }
+      if (preferredAnchorNodeId && groupNodesRaw.some((node) => node.id === preferredAnchorNodeId)) {
+        anchorById.set(preferredAnchorNodeId, true);
+      }
       packRowGroup(groupNodesRaw, targetById, anchorById, rowTop);
     }
   }
@@ -403,6 +408,9 @@ export function buildFixedPositions(
           targetById.set(node.id, positions.get(node.id)?.x ?? (meta.get(node.id)?.baseX ?? 0) * FIXED_X_STEP);
           anchorById.set(node.id, false);
         }
+      }
+      if (preferredAnchorNodeId && groupNodesRaw.some((node) => node.id === preferredAnchorNodeId)) {
+        anchorById.set(preferredAnchorNodeId, true);
       }
       packRowGroup(groupNodesRaw, targetById, anchorById, rowTop);
     }

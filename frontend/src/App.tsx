@@ -153,6 +153,7 @@ export default function App() {
   const [userEdgeLineStyle, setUserEdgeLineStyle] = useState<EdgeLineStyleValue>("dashed");
   const [assistantEdgeLineStyle, setAssistantEdgeLineStyle] = useState<EdgeLineStyleValue>("solid");
   const [actionPreviewStyle, setActionPreviewStyle] = useState<ActionPreviewStyle>("outline");
+  const [showCanvasGrid, setShowCanvasGrid] = useState(false);
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [layoutSliderTab, setLayoutSliderTab] = useState<LayoutSliderTab>("spacing");
   const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
@@ -379,7 +380,18 @@ export default function App() {
         next.set(node.id, { width: node.width, height: node.height });
       }
     }
-    setNodeSizes(next);
+    setNodeSizes((current) => {
+      if (current.size !== next.size) {
+        return next;
+      }
+      for (const [id, size] of next) {
+        const existing = current.get(id);
+        if (!existing || existing.width !== size.width || existing.height !== size.height) {
+          return next;
+        }
+      }
+      return current;
+    });
   }, [reactFlowInstance]);
 
   const {
@@ -1066,29 +1078,19 @@ export default function App() {
 
   useEffect(() => {
     if (!fixedMode || !reactFlowInstance) return;
-    const raf1 = requestAnimationFrame(() => refreshMeasuredNodeSizes());
-    const raf2 = requestAnimationFrame(() => {
+    const raf = requestAnimationFrame(() => {
       requestAnimationFrame(() => refreshMeasuredNodeSizes());
     });
-    const timeout = window.setTimeout(() => refreshMeasuredNodeSizes(), 320);
     return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-      window.clearTimeout(timeout);
+      cancelAnimationFrame(raf);
     };
   }, [fixedMode, reactFlowInstance, refreshMeasuredNodeSizes, nodes]);
 
   useEffect(() => {
     if (!fixedMode || !reactFlowInstance) return;
-    const raf = requestAnimationFrame(() => {
-      refreshMeasuredNodeSizes();
-    });
-    const timeout = window.setTimeout(() => {
-      refreshMeasuredNodeSizes();
-    }, 120);
+    const raf = requestAnimationFrame(() => refreshMeasuredNodeSizes());
     return () => {
       cancelAnimationFrame(raf);
-      window.clearTimeout(timeout);
     };
   }, [fixedMode, nodeSizingSignature, reactFlowInstance, refreshMeasuredNodeSizes]);
 
@@ -1194,8 +1196,8 @@ export default function App() {
   );
 
   const structure = useMemo(
-    () => buildFixedPositions(layoutNodes, layoutNodeSizes, { rowGap, treeGap, siblingGap }),
-    [layoutNodeSizes, layoutNodes, rowGap, siblingGap, treeGap]
+    () => buildFixedPositions(layoutNodes, layoutNodeSizes, { rowGap, treeGap, siblingGap, preferredAnchorNodeId: selectedNodeId }),
+    [layoutNodeSizes, layoutNodes, rowGap, selectedNodeId, siblingGap, treeGap]
   );
 
   const uiNodes: Node<GraphNodeUiData | { label: string; previewText: string; hiddenCount: number; onUnfold: () => void }>[] =
@@ -1381,8 +1383,8 @@ export default function App() {
   const desktopGridCols = panelOpen ? "md:grid-cols-[16rem_minmax(0,1fr)_420px]" : "md:grid-cols-[16rem_minmax(0,1fr)]";
 
   return (
-    <div
-      className={`relative grid h-full w-full min-h-0 grid-rows-[auto_1fr_auto] overflow-hidden ${desktopGridCols} ${
+      <div
+        className={`relative grid h-full w-full min-h-0 grid-rows-[auto_1fr_auto] overflow-hidden ${desktopGridCols} ${
         fixedMode ? "fixed-layout-animated" : ""
       }`}
     >
@@ -1492,6 +1494,8 @@ export default function App() {
           setAssistantEdgeLineStyle={setAssistantEdgeLineStyle}
           actionPreviewStyle={actionPreviewStyle}
           setActionPreviewStyle={setActionPreviewStyle}
+          showCanvasGrid={showCanvasGrid}
+          setShowCanvasGrid={setShowCanvasGrid}
         />
         <div className="h-full w-full">
           <ReactFlow
@@ -1625,6 +1629,13 @@ export default function App() {
               </ControlButton>
             </Controls>
           </ReactFlow>
+          {showCanvasGrid && (
+            <div className="pointer-events-none absolute inset-0 z-[450] grid grid-cols-4 grid-rows-4">
+              {Array.from({ length: 16 }, (_, index) => (
+                <div key={`canvas-grid-${index}`} className="border border-red-500/70" />
+              ))}
+            </div>
+          )}
         </div>
       </main>
 

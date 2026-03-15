@@ -18,11 +18,12 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
   const isSummaryNode = data.mode === "summary";
   const wheelEligible = !data.variantLocked && !!data.variants;
   const canCycleVariants = !data.pending && !data.variantLocked && !!data.variants;
-  const minControlsContentWidth = canCycleVariants ? 300 : 120;
+  const variantControlsWidth = canCycleVariants ? 104 : 0;
+  const minControlsContentWidth = canCycleVariants ? 198 : 120;
   const renderedText = data.displayText ?? data.text;
   const size = estimateNodeFrame("assistant", renderedText, {
     forceMinContentWidth: minControlsContentWidth,
-    extraMinWidth: canCycleVariants ? 180 : 0,
+    extraMinWidth: canCycleVariants ? 56 : 0,
   });
   const contentWidth = Math.max(minControlsContentWidth, size.contentWidth);
   const actionPreviewClass = getActionPreviewClasses(!!data.actionPreviewActive, data.actionPreviewStyle ?? "outline");
@@ -60,12 +61,9 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
   };
 
   useLayoutEffect(() => {
-    updateNodeInternals(id);
     const raf = requestAnimationFrame(() => updateNodeInternals(id));
-    const timeout = window.setTimeout(() => updateNodeInternals(id), 80);
     return () => {
       cancelAnimationFrame(raf);
-      window.clearTimeout(timeout);
     };
   }, [
     data.contextMenuOpen,
@@ -107,7 +105,7 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
       style={{
         width: size.width + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0),
         minHeight: size.minHeight,
-        transition: "width 260ms ease, border-color 200ms ease",
+        transition: "border-color 200ms ease",
       }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
@@ -121,57 +119,57 @@ function AssistantNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
                   {isSummaryNode ? "Summary" : "Assistant"}
                 </div>
                 {canCycleVariants && (
-                  <>
+                  <div className="flex items-center gap-2" style={{ width: variantControlsWidth }}>
                     <NodeActionButton
-                      className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+                      className="flex h-5 w-5 items-center justify-center rounded bg-stone-100 text-xs hover:bg-stone-200"
                       onClick={() => {
                         data.onCycleVariant?.(id, -1);
                       }}
                       ariaLabel="Previous variant"
                     >
-                      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M5 12L10 7L15 12" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </NodeActionButton>
                     <NodeActionButton
-                      className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+                      className="flex h-5 w-5 items-center justify-center rounded bg-stone-100 text-xs hover:bg-stone-200"
                       onClick={() => {
                         data.onCycleVariant?.(id, 1);
                       }}
                       ariaLabel="Next variant"
                     >
-                      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M5 8L10 13L15 8" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </NodeActionButton>
                     <NodeActionButton
-                      className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
+                      className="flex h-5 w-5 items-center justify-center rounded bg-stone-100 text-xs hover:bg-stone-200"
                       onClick={() => {
                         data.onApproveVariant?.(id);
                       }}
                       ariaLabel="Approve current variant"
                       title="Approve current variant"
                     >
-                      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M4 10l4 4 8-8" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </NodeActionButton>
-                  </>
-                )}
-              </>
-            }
-            right={
-              <>
-                {canCycleVariants && (
-                  <div className="h-1.5 w-10 overflow-hidden rounded-full bg-stone-200" aria-hidden>
                     <div
-                      className="h-full rounded-full bg-accent transition-all duration-200"
-                      style={{ width: `${((data.variantIndex + 1) / 3) * 100}%` }}
-                    />
+                      className="flex h-5 w-5 items-center justify-center rounded"
+                      aria-hidden
+                    >
+                      <div className="h-1.5 w-6 overflow-hidden rounded-full bg-stone-200">
+                        <div
+                          className="h-full rounded-full bg-accent transition-all duration-200"
+                          style={{ width: `${((data.variantIndex + 1) / 3) * 100}%` }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
               </>
             }
+            right={null}
           />
           <div className="relative">
             <div

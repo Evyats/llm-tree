@@ -52,6 +52,21 @@ function getBoundsFromNodes(nodes: Node[], nodeOriginX: number, nodeOriginY: num
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
+function getBoundsFromNode(node: Node, nodeOriginX: number, nodeOriginY: number) {
+  const measuredNode = node as typeof node & { measured?: { width?: number; height?: number } };
+  const width = node.width ?? measuredNode.measured?.width ?? 0;
+  const height = node.height ?? measuredNode.measured?.height ?? 0;
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+  return {
+    x: node.position.x - width * nodeOriginX,
+    y: node.position.y - height * nodeOriginY,
+    width,
+    height,
+  };
+}
+
 export function useViewportControls({
   reactFlowInstance,
   mainElement,
@@ -90,14 +105,18 @@ export function useViewportControls({
   );
 
   const centerNodeInView = useCallback(
-    (nodeId: string, duration = 560) => {
+    (nodeId: string, duration = 900) => {
       if (!reactFlowInstance) return;
       const node = reactFlowInstance.getNode(nodeId);
       if (!node) return;
+      const bounds = getBoundsFromNode(node, nodeOriginX, nodeOriginY);
+      if (!bounds) return;
       const zoom = reactFlowInstance.getZoom();
       const { width, height } = getCanvasSize(mainElement);
-      const targetX = width / 2 - node.position.x * zoom;
-      const targetY = height * 0.2 - node.position.y * zoom;
+      const centerX = bounds.x + bounds.width / 2;
+      const centerY = bounds.y + bounds.height / 2;
+      const targetX = width / 2 - centerX * zoom;
+      const targetY = height * 0.25 - centerY * zoom;
       void reactFlowInstance.setViewport(
         {
           x: targetX,
@@ -107,7 +126,7 @@ export function useViewportControls({
         { duration },
       );
     },
-    [mainElement, reactFlowInstance],
+    [mainElement, nodeOriginX, nodeOriginY, reactFlowInstance],
   );
 
   return {
