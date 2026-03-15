@@ -207,6 +207,62 @@ def test_variant_update_returns_409_after_branching(client: TestClient) -> None:
     assert response.status_code == 409
 
 
+def test_lock_variant_prunes_alternatives_from_graph_payload(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Lock variant"}).json()["graph_id"]
+    base = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "hello",
+            "mode": "normal",
+        },
+    ).json()
+    assistant_id = base["created_assistant_node"]["id"]
+
+    response = client.patch(
+        f"/api/nodes/{assistant_id}/variant-index",
+        json={"variant_index": 2, "lock_selected": True},
+    )
+    assert response.status_code == 200
+
+    graph = client.get(f"/api/graphs/{graph_id}").json()
+    assistant = next(node for node in graph["nodes"] if node["id"] == assistant_id)
+    assert assistant["variants"] is None
+    assert assistant["text"] == base["created_assistant_node"]["variants"]["long"]
+
+
+def test_branching_prunes_anchor_variants_from_graph_payload(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Branch prune"}).json()["graph_id"]
+    base = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "hello",
+            "mode": "normal",
+        },
+    ).json()
+    assistant_id = base["created_assistant_node"]["id"]
+
+    branch = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": assistant_id,
+            "continue_from_variant_index": 1,
+            "user_text": "child",
+            "mode": "normal",
+        },
+    )
+    assert branch.status_code == 200
+
+    graph = client.get(f"/api/graphs/{graph_id}").json()
+    assistant = next(node for node in graph["nodes"] if node["id"] == assistant_id)
+    assert assistant["variants"] is None
+    assert assistant["text"] == base["created_assistant_node"]["variants"]["medium"]
+
+
 def test_continue_from_null_anchor_creates_disconnected_root_branch(client: TestClient) -> None:
     graph_id = client.post("/api/graphs", json={"title": "Disconnected roots"}).json()["graph_id"]
     _ = client.post(
@@ -344,3 +400,66 @@ def test_compact_branch_replaces_subtree_with_summary_node(client: TestClient) -
     assert summary_node["role"] == "assistant"
     assert summary_node["parent_id"] == root_assistant
     assert summary_node["variants"]["medium"]
+
+
+def test_graph_collapsed_state_round_trips(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Collapsed state"}).json()["graph_id"]
+    first = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "root",
+            "mode": "normal",
+        },
+    ).json()
+    root_assistant = first["created_assistant_node"]["id"]
+    second = client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": root_assistant,
+            "user_text": "branch",
+            "mode": "normal",
+        },
+    ).json()
+    branch_user = second["created_user_node"]["id"]
+
+    response = client.put(
+        f"/api/graphs/{graph_id}/collapsed-state",
+        json={
+            "collapsed_targets": [branch_user],
+            "collapsed_edge_sources": {branch_user: root_assistant},
+        },
+    )
+    assert response.status_code == 200
+
+    graph = client.get(f"/api/graphs/{graph_id}")
+    assert graph.status_code == 200
+    payload = graph.json()
+    assert payload["collapsed_state"]["collapsed_targets"] == [branch_user]
+    assert payload["collapsed_state"]["collapsed_edge_sources"] == {branch_user: root_assistant}
+
+
+def test_generate_graph_title_uses_short_title_and_returns_source(client: TestClient) -> None:
+    graph_id = client.post("/api/graphs", json={"title": "Chat Tree"}).json()["graph_id"]
+    client.post(
+        "/api/messages/continue",
+        json={
+            "graph_id": graph_id,
+            "continue_from_node_id": None,
+            "user_text": "How do I deploy this FastAPI app?",
+            "mode": "normal",
+        },
+    )
+
+    response = client.post(
+        f"/api/graphs/{graph_id}/generate-title",
+        json={"selected_model": "fallback"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["graph_id"] == graph_id
+    assert payload["response_source"] == "fallback"
+    assert isinstance(payload["title"], str)
+    assert payload["title"]

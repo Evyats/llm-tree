@@ -47,3 +47,8 @@ def fallback_tree_summary_variants(tree_summary: dict) -> Variants:
             "The conversation can now continue from this summarized point."
         ),
     )
+
+
+def fallback_chat_title(first_user_text: str | None) -> str:
+    _ = first_user_text
+    return "AI Generated Header"

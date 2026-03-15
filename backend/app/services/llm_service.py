@@ -6,7 +6,7 @@ from openai import OpenAI
 
 from app.core.config import get_settings
 from app.schemas.common import Variants
-from app.services.fallback import fallback_tree_summary_variants, fallback_variants
+from app.services.fallback import fallback_chat_title, fallback_tree_summary_variants, fallback_variants
 from app.services.llm_prompt import build_messages
 from app.services.llm_schema import build_request_body
 
@@ -148,3 +148,67 @@ def generate_tree_summary_variants(
     except Exception as exc:
         logger.warning("OPENAI_CALL_FAILED using=fallback error=%s", repr(exc))
         return fallback_tree_summary_variants({**tree_summary, "tree": tree_json}), "fallback"
+
+
+def generate_chat_title(
+    transcript: list[dict[str, str]],
+    runtime_api_key: str | None,
+    selected_model: str | None = None,
+) -> tuple[str, Literal["live", "fallback"]]:
+    settings = get_settings()
+    api_key = runtime_api_key or settings.openai_api_key
+    available_models = settings.parsed_openai_models
+    normalized_model = (selected_model or "").strip()
+    force_fallback = normalized_model == "" or normalized_model == "fallback"
+    chosen_model = (
+        normalized_model
+        if normalized_model in available_models
+        else (available_models[0] if available_models else None)
+    )
+    if normalized_model and normalized_model not in {"fallback", *available_models}:
+        logger.warning("MODEL_SELECTION_INVALID selected=%s available=%s", normalized_model, available_models)
+
+    first_user_text = next((item.get("content", "") for item in transcript if item.get("role") == "user"), "")
+    if force_fallback or not api_key or not chosen_model:
+        return fallback_chat_title(first_user_text), "fallback"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Create a very short title for this chat. "
+                "Return plain text only. Use 2 to 4 words. No quotes. No punctuation unless essential."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(transcript, ensure_ascii=False),
+        },
+    ]
+    logger.info(
+        "OPENAI_REQUEST_BODY %s",
+        json.dumps(
+            {
+                "has_api_key": bool(api_key),
+                "mode": "chat-title",
+                "selected_model": normalized_model or "fallback",
+                "request_body": {"model": chosen_model, "messages": messages},
+            },
+            ensure_ascii=False,
+        ),
+    )
+    try:
+        client = OpenAI(api_key=api_key, timeout=settings.openai_timeout_seconds)
+        response = client.chat.completions.create(
+            model=chosen_model,
+            temperature=0.2,
+            messages=messages,
+        )
+        title = (response.choices[0].message.content or "").strip().strip("\"' \n\t")
+        title = " ".join(title.split())[:40].strip()
+        if not title:
+            return fallback_chat_title(first_user_text), "fallback"
+        return title, "live"
+    except Exception as exc:
+        logger.warning("OPENAI_CALL_FAILED using=fallback error=%s", repr(exc))
+        return fallback_chat_title(first_user_text), "fallback"

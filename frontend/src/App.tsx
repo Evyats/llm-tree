@@ -18,9 +18,12 @@ import {
   compactBranch,
   deleteNodeSubtree,
   extractNodePath,
+  generateGraphTitle,
   getGraph,
+  lockVariant,
   listAvailableModels,
   setSessionApiKey,
+  updateGraphCollapsedState,
   updateVariant,
 } from "./api/client";
 import ElaborateButton from "./components/common/ElaborateButton";
@@ -55,8 +58,10 @@ import {
   COLLAPSED_NODE_SIZE,
   DEFAULT_ASSISTANT_WHEEL_HOLD_MS,
 } from "./features/graph/constants";
+import { type ActionPreviewKind, type ActionPreviewStyle } from "./features/graph/actionPreview";
 import { buildDeleteProjection } from "./features/graph/deleteProjection";
 import { type EdgeLineStyleValue, type EdgeMotionValue, type EdgeTypeValue } from "./features/graph/edgeStyles";
+import { buildNodeDisplayText } from "./features/graph/nodeTextPreview";
 import { applyFoldForEdgeWithController, applyFoldForNodeWithController } from "./features/graph/foldController";
 import { buildNodeMap, getAssistantNodesWithUserBranch } from "./features/graph/nodeSelectors";
 import type { GraphNodeUiData } from "./features/graph/nodeUi";
@@ -95,6 +100,7 @@ export default function App() {
   const {
     graphId,
     title,
+    titleState,
     nodes,
     edges,
     selectedNodeId,
@@ -102,6 +108,7 @@ export default function App() {
     transcript,
     responseSource,
     setGraph,
+    setTitle,
     appendEntities,
     setSelectedNode,
     setNodes,
@@ -118,6 +125,7 @@ export default function App() {
   const [panelText, setPanelText] = useState("");
   const [loading, setLoading] = useState(false);
   const [modelResponseLoading, setModelResponseLoading] = useState(false);
+  const [llmTasks, setLlmTasks] = useState<Array<{ id: string; label: string }>>([]);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("fallback");
@@ -142,6 +150,7 @@ export default function App() {
   const [assistantEdgeMotion, setAssistantEdgeMotion] = useState<EdgeMotionValue>("static");
   const [userEdgeLineStyle, setUserEdgeLineStyle] = useState<EdgeLineStyleValue>("dashed");
   const [assistantEdgeLineStyle, setAssistantEdgeLineStyle] = useState<EdgeLineStyleValue>("solid");
+  const [actionPreviewStyle, setActionPreviewStyle] = useState<ActionPreviewStyle>("outline");
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [layoutSliderTab, setLayoutSliderTab] = useState<LayoutSliderTab>("spacing");
   const [layoutPanelPosition, setLayoutPanelPosition] = useState({ left: 120, top: 56 });
@@ -152,13 +161,14 @@ export default function App() {
   const [wheelHoverProgress, setWheelHoverProgress] = useState(0);
   const [wheelHoverActive, setWheelHoverActive] = useState(false);
   const [nodeContextMenuNodeId, setNodeContextMenuNodeId] = useState<string | null>(null);
+  const [actionPreviewNodeIds, setActionPreviewNodeIds] = useState<Set<string>>(new Set());
+  const [expandedTextNodeIds, setExpandedTextNodeIds] = useState<Set<string>>(new Set());
   const [compactingNodeIds, setCompactingNodeIds] = useState<Set<string>>(new Set());
   const {
     collapsedTargets,
     collapsedEdgeSources,
     setCollapsedTargets,
     setCollapsedEdgeSources,
-    resetCollapsed,
     collapseByEdge,
     unfoldSubtree,
   } = useCollapsedBranches();
@@ -175,6 +185,57 @@ export default function App() {
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const suppressPaneClearUntilRef = useRef(0);
   const compactingCountsRef = useRef<Map<string, number>>(new Map());
+  const collapseHydratedRef = useRef(false);
+  const collapsePersistTimerRef = useRef<number | null>(null);
+  const collapsePersistSignatureRef = useRef<string>("");
+  const autoNamingGraphIdRef = useRef<string | null>(null);
+
+  const buildCollapsedStateSignature = useCallback(
+    (targets: Iterable<string>, edgeSources: Iterable<[string, string]>) =>
+      JSON.stringify({
+        collapsedTargets: Array.from(targets).sort(),
+        collapsedEdgeSources: Array.from(edgeSources).sort(([a], [b]) => a.localeCompare(b)),
+      }),
+    []
+  );
+
+  const applyCollapsedState = useCallback(
+    (targets: string[], edgeSources: Record<string, string>) => {
+      const collapsedTargetsSet = new Set(targets);
+      const collapsedEdgeSourcesMap = new Map(Object.entries(edgeSources));
+      collapseHydratedRef.current = false;
+      if (collapsePersistTimerRef.current !== null) {
+        window.clearTimeout(collapsePersistTimerRef.current);
+        collapsePersistTimerRef.current = null;
+      }
+      collapsePersistSignatureRef.current = buildCollapsedStateSignature(
+        collapsedTargetsSet,
+        collapsedEdgeSourcesMap.entries()
+      );
+      setCollapsedTargets(collapsedTargetsSet);
+      setCollapsedEdgeSources(collapsedEdgeSourcesMap);
+      requestAnimationFrame(() => {
+        collapseHydratedRef.current = true;
+      });
+    },
+    [buildCollapsedStateSignature, setCollapsedEdgeSources, setCollapsedTargets]
+  );
+
+  const startLlmTask = useCallback((label: string) => {
+    const id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    setLlmTasks((prev) => [...prev, { id, label }]);
+    return id;
+  }, []);
+
+  const finishLlmTask = useCallback((taskId: string | null) => {
+    if (!taskId) {
+      return;
+    }
+    setLlmTasks((prev) => prev.filter((task) => task.id !== taskId));
+  }, []);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -183,32 +244,6 @@ export default function App() {
   useEffect(() => {
     edgesRef.current = edges;
   }, [edges]);
-
-  useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
-        return;
-      }
-      if (event.key.length !== 1) {
-        return;
-      }
-      const active = document.activeElement as HTMLElement | null;
-      if (
-        active &&
-        (active.tagName === "INPUT" ||
-          active.tagName === "TEXTAREA" ||
-          active.isContentEditable)
-      ) {
-        return;
-      }
-      event.preventDefault();
-      composerInputRef.current?.focus();
-      setComposerText((prev) => prev + event.key);
-    };
-
-    window.addEventListener("keydown", onWindowKeyDown);
-    return () => window.removeEventListener("keydown", onWindowKeyDown);
-  }, []);
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
@@ -228,10 +263,12 @@ export default function App() {
   useEffect(() => {
     manualPositionsRef.current = new Map();
     setNodeSizes(new Map());
-    resetCollapsed();
+    setActionPreviewNodeIds(new Set());
+    setExpandedTextNodeIds(new Set());
     setCompactingNodeIds(new Set());
     compactingCountsRef.current = new Map();
-  }, [graphId, resetCollapsed]);
+    autoNamingGraphIdRef.current = null;
+  }, [graphId]);
 
   const addCompactingNodeIds = useCallback((ids: Set<string>) => {
     const nextCounts = new Map(compactingCountsRef.current);
@@ -304,6 +341,20 @@ export default function App() {
     nodeOriginY: NODE_ORIGIN_Y,
   });
 
+  const handleMiniMapClick = useCallback(
+    (_event: MouseEvent | React.MouseEvent<Element, MouseEvent>, position: { x: number; y: number }) => {
+      if (!reactFlowInstance) {
+        return;
+      }
+
+      void reactFlowInstance.setCenter(position.x, position.y, {
+        zoom: reactFlowInstance.getZoom(),
+        duration: 180,
+      });
+    },
+    [reactFlowInstance],
+  );
+
   const updateLayoutPanelPosition = useCallback(() => {
     const mainEl = mainRef.current;
     if (!mainEl) return;
@@ -331,17 +382,20 @@ export default function App() {
 
   const {
     previousChats,
+    autoRenamingChatIds,
     refreshGraphList,
     loadGraph,
     startNewChat,
     selectChatFromHistory,
     handleRenameChat,
+    handleAutoRenameChat,
     handleDeleteChat,
     handleDeleteAllChats,
   } = useGraphSessions({
     graphId,
     nodesCount: nodes.length,
     setGraph,
+    applyCollapsedState,
     setPanelOpen,
     setPanelAnchorNodeId,
     setComposerText,
@@ -353,15 +407,47 @@ export default function App() {
     setLoading,
     setMobileHistoryOpen,
     fitCanvasToGraph,
+    selectedModel,
+    startLlmTask,
+    finishLlmTask,
   });
 
   useGraphBootstrap({
     setLoading,
     setError,
     setGraph,
+    applyCollapsedState,
     fitCanvasToGraph,
     refreshGraphList,
   });
+
+  const maybeAutoNameGraph = useCallback(
+    async (nextNodes: Node<NodeData>[]) => {
+      if (!graphId || titleState !== "untitled") {
+        return;
+      }
+      const userNodeCount = nextNodes.filter((node) => node.data.role === "user" && !node.data.pending).length;
+      if (userNodeCount < 3) {
+        return;
+      }
+      if (autoNamingGraphIdRef.current === graphId) {
+        return;
+      }
+      autoNamingGraphIdRef.current = graphId;
+      let llmTaskId: string | null = null;
+      try {
+        llmTaskId = startLlmTask("Generating chat title");
+        const response = await generateGraphTitle(graphId, selectedModel);
+        setTitle(response.title, response.title_state);
+        await refreshGraphList();
+      } catch {
+        // Keep conversation flow intact even if title generation fails.
+      } finally {
+        finishLlmTask(llmTaskId);
+      }
+    },
+    [finishLlmTask, graphId, refreshGraphList, selectedModel, setTitle, startLlmTask, titleState]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -411,6 +497,49 @@ export default function App() {
     [childrenByNodeId]
   );
 
+  const getPathNodeIds = useCallback(
+    (startNodeId: string) => {
+      const ids = new Set<string>();
+      let cursor: string | null = startNodeId;
+      const seen = new Set<string>();
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        ids.add(cursor);
+        cursor = nodesById.get(cursor)?.data.parentId ?? null;
+      }
+      return ids;
+    },
+    [nodesById]
+  );
+
+  const clearActionPreview = useCallback(() => {
+    setActionPreviewNodeIds((prev) => (prev.size === 0 ? prev : new Set()));
+  }, []);
+
+  const previewActionForNode = useCallback(
+    (nodeId: string, action: ActionPreviewKind) => {
+      const next =
+        action === "context" || action === "extract" ? getPathNodeIds(nodeId) : getSubtreeNodeIds(nodeId);
+      setActionPreviewNodeIds(next);
+    },
+    [getPathNodeIds, getSubtreeNodeIds]
+  );
+
+  const toggleExpandedText = useCallback((nodeId: string) => {
+    setExpandedTextNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+    requestAnimationFrame(() => {
+      refreshMeasuredNodeSizes();
+    });
+  }, [refreshMeasuredNodeSizes]);
+
   useEffect(() => {
     setCollapsedTargets((prev) => {
       const next = pruneCollapsedTargets(nodes, prev);
@@ -440,6 +569,34 @@ export default function App() {
       return prev;
     });
   }, [collapsedTargets, nodes]);
+
+  useEffect(() => {
+    if (!graphId || !collapseHydratedRef.current) {
+      return;
+    }
+    const signature = buildCollapsedStateSignature(collapsedTargets, collapsedEdgeSources.entries());
+    if (signature === collapsePersistSignatureRef.current) {
+      return;
+    }
+    if (collapsePersistTimerRef.current !== null) {
+      window.clearTimeout(collapsePersistTimerRef.current);
+    }
+    collapsePersistTimerRef.current = window.setTimeout(() => {
+      collapsePersistSignatureRef.current = signature;
+      void updateGraphCollapsedState(
+        graphId,
+        Array.from(collapsedTargets),
+        Object.fromEntries(collapsedEdgeSources.entries())
+      );
+      collapsePersistTimerRef.current = null;
+    }, 180);
+    return () => {
+      if (collapsePersistTimerRef.current !== null) {
+        window.clearTimeout(collapsePersistTimerRef.current);
+        collapsePersistTimerRef.current = null;
+      }
+    };
+  }, [buildCollapsedStateSignature, collapsedEdgeSources, collapsedTargets, graphId]);
 
   const cycleVariant = useCallback(
     async (nodeId: string, direction: -1 | 1) => {
@@ -472,14 +629,98 @@ export default function App() {
   }, []);
 
   const approveVariant = useCallback(
-    (nodeId: string) => {
+    async (nodeId: string) => {
+      const node = nodesById.get(nodeId);
       lockNodeVariant(nodeId);
+      const currentVariantIndex = node?.data.variantIndex ?? 0;
+      try {
+        await lockVariant(nodeId, currentVariantIndex);
+      } catch {
+        // Keep UI optimistic even if persistence update fails.
+      }
       if (wheelHoverNodeId === nodeId) {
         clearAssistantWheelHover();
       }
     },
-    [clearAssistantWheelHover, lockNodeVariant, wheelHoverNodeId]
+    [clearAssistantWheelHover, lockNodeVariant, nodesById, wheelHoverNodeId]
   );
+
+  const canKeyboardCycleSelectedAssistant = useMemo(() => {
+    if (!selectedNodeId) {
+      return false;
+    }
+    const node = nodesById.get(selectedNodeId);
+    return !!(
+      node &&
+      node.data.role === "assistant" &&
+      node.data.variants &&
+      !node.data.variantLocked &&
+      !node.data.pending
+    );
+  }, [nodesById, selectedNodeId]);
+
+  useEffect(() => {
+    const isEditableTarget = (element: HTMLElement | null) =>
+      !!element &&
+      (element.tagName === "INPUT" ||
+        element.tagName === "TEXTAREA" ||
+        element.isContentEditable);
+
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (isEditableTarget(active)) {
+        return;
+      }
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (event.key === "ArrowUp" && selectedNodeId && canKeyboardCycleSelectedAssistant) {
+          event.preventDefault();
+          void cycleVariant(selectedNodeId, -1);
+          return;
+        }
+        if (event.key === "ArrowDown" && selectedNodeId && canKeyboardCycleSelectedAssistant) {
+          event.preventDefault();
+          void cycleVariant(selectedNodeId, 1);
+          return;
+        }
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      if (event.key.length !== 1) {
+        return;
+      }
+      event.preventDefault();
+      composerInputRef.current?.focus();
+      setComposerText((prev) => prev + event.key);
+    };
+
+    const onWindowPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (isEditableTarget(active)) {
+        return;
+      }
+      const text = event.clipboardData?.getData("text");
+      if (!text) {
+        return;
+      }
+      event.preventDefault();
+      composerInputRef.current?.focus();
+      setComposerText((prev) => prev + text);
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown);
+    window.addEventListener("paste", onWindowPaste);
+    return () => {
+      window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("paste", onWindowPaste);
+    };
+  }, [canKeyboardCycleSelectedAssistant, cycleVariant, selectedNodeId]);
 
   const handleAssistantHoverStart = useCallback(
     (nodeId: string) => {
@@ -548,6 +789,7 @@ export default function App() {
       if (event.button !== 0) {
         return;
       }
+      clearActionPreview();
       const target = event.target;
       if (target instanceof Element && target.closest('[data-node-action-button="true"]')) {
         return;
@@ -556,7 +798,7 @@ export default function App() {
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [nodeContextMenuNodeId]);
+  }, [clearActionPreview, nodeContextMenuNodeId]);
 
   const { sendContinue, sendPanelContinue } = useConversationActions({
     graphId,
@@ -584,6 +826,9 @@ export default function App() {
     setModelResponseLoading,
     setError,
     clearElaborateAction: () => setElaborateAction(null),
+    startLlmTask,
+    finishLlmTask,
+    maybeAutoNameGraph,
   });
 
   const handleDeleteNodeSubtree = useCallback(
@@ -661,19 +906,21 @@ export default function App() {
   );
 
   const handleCompactBranch = useCallback(
-    async (nodeId: string) => {
-      if (!graphId) return;
-      const idsToCompact = getSubtreeNodeIds(nodeId);
-      setLoading(true);
-      setError(null);
-      setNodeContextMenuNodeId(null);
-      addCompactingNodeIds(idsToCompact);
-      try {
-        const response = await compactBranch(nodeId, selectedModel);
+      async (nodeId: string) => {
+        if (!graphId) return;
+        const idsToCompact = getSubtreeNodeIds(nodeId);
+        let llmTaskId: string | null = null;
+        setLoading(true);
+        setError(null);
+        setNodeContextMenuNodeId(null);
+        addCompactingNodeIds(idsToCompact);
+        try {
+          llmTaskId = startLlmTask("Compacting branch");
+          const response = await compactBranch(nodeId, selectedModel);
         if (selectedModel === "fallback" && fallbackDelayMs > 0) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, fallbackDelayMs));
         }
-        setGraph(response.graph_id, response.title, response.nodes, response.edges);
+          setGraph(response.graph_id, response.title, response.title_state, response.nodes, response.edges);
         setSelectedNode(response.compacted_node_id);
         setResponseSource(response.response_source);
         if (panelAnchorNodeId && idsToCompact.has(panelAnchorNodeId)) {
@@ -685,30 +932,33 @@ export default function App() {
           setElaborateAction(null);
         }
         await refreshGraphList();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to compact branch");
-      } finally {
-        removeCompactingNodeIds(idsToCompact);
-        setLoading(false);
-      }
-    },
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to compact branch");
+        } finally {
+          finishLlmTask(llmTaskId);
+          removeCompactingNodeIds(idsToCompact);
+          setLoading(false);
+        }
+      },
     [
       addCompactingNodeIds,
-      elaborateAction,
-      getSubtreeNodeIds,
-      graphId,
-      panelAnchorNodeId,
-      refreshGraphList,
-      removeCompactingNodeIds,
-      fallbackDelayMs,
-      selectedModel,
-      setGraph,
-      setPanelOpen,
-      setSelectedNode,
-      setTranscript,
-      setResponseSource,
-    ]
-  );
+        elaborateAction,
+        finishLlmTask,
+        getSubtreeNodeIds,
+        graphId,
+        panelAnchorNodeId,
+        refreshGraphList,
+        removeCompactingNodeIds,
+        fallbackDelayMs,
+        selectedModel,
+        setGraph,
+        setPanelOpen,
+        setSelectedNode,
+        setTranscript,
+        setResponseSource,
+        startLlmTask,
+      ]
+    );
 
   const openContextPanelForNode = useCallback(
     async (nodeId: string) => {
@@ -871,8 +1121,19 @@ export default function App() {
     [collapsedTargets, hiddenNodeIds, nodesById]
   );
   const layoutNodes = useMemo(
-    () => buildLayoutNodes(nodes, hiddenNodeIds, collapsedProxyTargets),
-    [collapsedProxyTargets, hiddenNodeIds, nodes]
+    () =>
+      buildLayoutNodes(nodes, hiddenNodeIds, collapsedProxyTargets).map((node) => {
+        const expanded = expandedTextNodeIds.has(node.id);
+        const display = buildNodeDisplayText(node.data.text ?? "", expanded);
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            text: display.text,
+          },
+        };
+      }),
+    [collapsedProxyTargets, expandedTextNodeIds, hiddenNodeIds, nodes]
   );
   const layoutNodeSizes = useMemo(
     () => buildLayoutNodeSizes(nodeSizes, collapsedProxyTargets, COLLAPSED_NODE_SIZE),
@@ -898,6 +1159,8 @@ export default function App() {
               ? [{ text: elaborateAction.text, occurrence: elaborateAction.occurrence }]
               : [];
           const mergedHighlights = [...(node.data.elaboratedSelections ?? []), ...activeSelectionHighlight];
+          const expanded = expandedTextNodeIds.has(node.id);
+          const display = buildNodeDisplayText(node.data.text ?? "", expanded);
 
           return {
             ...node,
@@ -916,7 +1179,12 @@ export default function App() {
                   }
                 : {}),
               ...node.data,
+              displayText: display.text,
+              textExpandable: display.expandable,
+              textExpanded: expanded,
               compacting: compactingNodeIds.has(node.id),
+              actionPreviewActive: actionPreviewNodeIds.has(node.id),
+              actionPreviewStyle,
               elaboratedSelections: mergedHighlights,
               sizingSignature: nodeSizingSignature,
               layer: structure.meta.get(node.id)?.layer ?? 0,
@@ -955,8 +1223,18 @@ export default function App() {
               onHoverWheelScroll: (nodeId: string, deltaY: number, clientX: number, clientY: number) =>
                 handleAssistantWheel(nodeId, deltaY, clientX, clientY),
               onToggleContextMenu: (nodeId: string) => {
+                clearActionPreview();
                 setSelectedNode(nodeId);
                 setNodeContextMenuNodeId((prev) => (prev === nodeId ? null : nodeId));
+              },
+              onActionPreviewStart: (nodeId: string, action: ActionPreviewKind) => {
+                previewActionForNode(nodeId, action);
+              },
+              onActionPreviewEnd: () => {
+                clearActionPreview();
+              },
+              onToggleExpandedText: (nodeId: string) => {
+                toggleExpandedText(nodeId);
               },
             } as GraphNodeUiData,
           };
@@ -967,8 +1245,12 @@ export default function App() {
       elaborateAction,
       assistantWithBranch,
       approveVariant,
+      actionPreviewNodeIds,
+      actionPreviewStyle,
       collapsedProxyTargets,
+      clearActionPreview,
       cycleVariant,
+      expandedTextNodeIds,
       fixedMode,
       getSubtreeNodeIds,
       handleAssistantHoverEnd,
@@ -976,6 +1258,7 @@ export default function App() {
       handleAssistantWheel,
       compactingNodeIds,
       hiddenNodeIds,
+      previewActionForNode,
       nodes,
       panelAnchorNodeId,
       panelOpen,
@@ -985,6 +1268,7 @@ export default function App() {
       selectedNodeId,
       setTranscript,
       structure,
+      toggleExpandedText,
       unfoldSubtree,
       nodeContextMenuNodeId,
       handleExtractPathToTree,
@@ -1074,6 +1358,8 @@ export default function App() {
           chats={previousChats}
           onSelect={(targetGraphId) => void selectChatFromHistory(targetGraphId)}
           onRename={(chat) => void handleRenameChat(chat)}
+          onAutoRename={(chat) => void handleAutoRenameChat(chat)}
+          autoRenamingChatIds={autoRenamingChatIds}
           onDelete={(chat) => void handleDeleteChat(chat)}
           onDeleteAll={() => void handleDeleteAllChats()}
         />
@@ -1093,6 +1379,8 @@ export default function App() {
               chats={previousChats}
               onSelect={(targetGraphId) => void selectChatFromHistory(targetGraphId)}
               onRename={(chat) => void handleRenameChat(chat)}
+              onAutoRename={(chat) => void handleAutoRenameChat(chat)}
+              autoRenamingChatIds={autoRenamingChatIds}
               onDelete={(chat) => void handleDeleteChat(chat)}
               onDeleteAll={() => void handleDeleteAllChats()}
               onClose={() => setMobileHistoryOpen(false)}
@@ -1149,6 +1437,8 @@ export default function App() {
           setAssistantEdgeMotion={setAssistantEdgeMotion}
           assistantEdgeLineStyle={assistantEdgeLineStyle}
           setAssistantEdgeLineStyle={setAssistantEdgeLineStyle}
+          actionPreviewStyle={actionPreviewStyle}
+          setActionPreviewStyle={setActionPreviewStyle}
         />
         <div className="h-full w-full">
           <ReactFlow
@@ -1158,6 +1448,7 @@ export default function App() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onEdgeClick={(event, edge) => {
+              clearActionPreview();
               if (compactingNodeIds.has(edge.source) || compactingNodeIds.has(edge.target)) {
                 return;
               }
@@ -1168,6 +1459,7 @@ export default function App() {
               event.stopPropagation();
             }}
             onNodeClick={(event, node) => {
+              clearActionPreview();
               if ("button" in event && event.button !== 0) {
                 return;
               }
@@ -1181,6 +1473,7 @@ export default function App() {
               setNodeContextMenuNodeId(null);
             }}
             onNodeDoubleClick={(event, node) => {
+              clearActionPreview();
               if ((node.data as GraphNodeUiData).compacting) {
                 return;
               }
@@ -1200,6 +1493,7 @@ export default function App() {
               applyFoldForNodeWithController(node.id, uiEdges, applyFoldForEdge);
             }}
             onPaneClick={() => {
+              clearActionPreview();
               setNodeContextMenuNodeId(null);
               if (panelOpen) {
                 return;
@@ -1221,7 +1515,7 @@ export default function App() {
             zoomOnDoubleClick={!fixedMode}
           >
             <Background color="#d6d0c5" gap={18} />
-            {!panelOpen && <MiniMap position="top-right" />}
+            {!panelOpen && <MiniMap position="top-right" pannable onClick={handleMiniMapClick} />}
             <Controls
               position="top-left"
               fitViewOptions={FIT_VIEW_OPTIONS}
@@ -1376,7 +1670,7 @@ export default function App() {
         />
       </div>
 
-      <ModelResponseBanner visible={modelResponseLoading && hasPendingAssistant} />
+      <ModelResponseBanner tasks={llmTasks} />
       {error && <div className="absolute bottom-14 left-3 z-30 rounded bg-red-100 px-3 py-2 text-xs text-red-800">{error}</div>}
     </div>
   );

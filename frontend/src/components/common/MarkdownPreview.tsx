@@ -119,12 +119,12 @@ export default function MarkdownPreview({ text, highlights, className }: Markdow
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={highlightPlugin ? [highlightPlugin] : []}
         components={{
-          h1: ({ children }) => <h1 className="my-1 text-lg font-semibold leading-snug">{children}</h1>,
-          h2: ({ children }) => <h2 className="my-1 text-base font-semibold leading-snug">{children}</h2>,
-          h3: ({ children }) => <h3 className="my-1 text-sm font-semibold leading-snug">{children}</h3>,
-          h4: ({ children }) => <h4 className="my-1 text-sm font-medium leading-snug">{children}</h4>,
-          h5: ({ children }) => <h5 className="my-1 text-xs font-medium uppercase tracking-wide">{children}</h5>,
-          h6: ({ children }) => <h6 className="my-1 text-xs font-medium uppercase tracking-wide text-stone-500">{children}</h6>,
+          h1: ({ children }) => <h1 className="my-1 text-lg font-semibold leading-snug text-inherit">{children}</h1>,
+          h2: ({ children }) => <h2 className="my-1 text-base font-semibold leading-snug text-inherit">{children}</h2>,
+          h3: ({ children }) => <h3 className="my-1 text-sm font-semibold leading-snug text-inherit">{children}</h3>,
+          h4: ({ children }) => <h4 className="my-1 text-sm font-medium leading-snug text-inherit">{children}</h4>,
+          h5: ({ children }) => <h5 className="my-1 text-xs font-medium uppercase tracking-wide text-inherit">{children}</h5>,
+          h6: ({ children }) => <h6 className="my-1 text-xs font-medium uppercase tracking-wide text-inherit">{children}</h6>,
           p: ({ children }) => <p className="my-0">{children}</p>,
           ul: ({ children }) => <ul className="my-0 list-disc pl-5">{children}</ul>,
           ol: ({ children }) => <ol className="my-0 list-decimal pl-5">{children}</ol>,
@@ -140,10 +140,10 @@ export default function MarkdownPreview({ text, highlights, className }: Markdow
           th: ({ children }) => <th className="border border-stone-200 px-2 py-1 font-semibold">{children}</th>,
           td: ({ children }) => <td className="border border-stone-200 px-2 py-1 align-top">{children}</td>,
           code: ({ children }) => (
-            <code className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[0.92em] text-stone-800">{children}</code>
+            <code className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[0.92em] text-inherit">{children}</code>
           ),
           pre: ({ children }) => (
-            <pre className="my-1 overflow-x-auto rounded-md bg-stone-100 p-2 font-mono text-[0.9em] text-stone-800">
+            <pre className="my-1 overflow-x-auto rounded-md bg-stone-100 p-2 font-mono text-[0.9em] text-inherit">
               {children}
             </pre>
           ),
@@ -152,13 +152,13 @@ export default function MarkdownPreview({ text, highlights, className }: Markdow
               href={href}
               target="_blank"
               rel="noreferrer"
-              className="text-accent underline decoration-accent/60 underline-offset-2"
+              className="text-inherit underline underline-offset-2"
             >
               {children}
             </a>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="my-1 border-l-2 border-stone-300 pl-3 text-stone-700">{children}</blockquote>
+            <blockquote className="my-1 border-l-2 border-stone-300 pl-3 text-inherit">{children}</blockquote>
           ),
         }}
       >

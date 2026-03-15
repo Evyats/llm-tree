@@ -4,6 +4,7 @@ import {
   createGraph,
   deleteAllGraphs,
   deleteGraph,
+  generateGraphTitle,
   getGraph,
   listGraphs,
   renameGraph,
@@ -16,7 +17,8 @@ import { GRAPH_STORAGE_KEY } from "../layout/constants";
 interface UseGraphSessionsParams {
   graphId: string | null;
   nodesCount: number;
-  setGraph: (graphId: string, title: string, nodes: any[], edges: any[]) => void;
+  setGraph: (graphId: string, title: string, titleState: string, nodes: any[], edges: any[]) => void;
+  applyCollapsedState: (collapsedTargets: string[], collapsedEdgeSources: Record<string, string>) => void;
   setPanelOpen: (open: boolean) => void;
   setPanelAnchorNodeId: (nodeId: string | null) => void;
   setComposerText: (value: string) => void;
@@ -28,12 +30,16 @@ interface UseGraphSessionsParams {
   setLoading: (value: boolean) => void;
   setMobileHistoryOpen: (open: boolean) => void;
   fitCanvasToGraph: () => void;
+  selectedModel: string;
+  startLlmTask: (label: string) => string;
+  finishLlmTask: (taskId: string | null) => void;
 }
 
 export function useGraphSessions({
   graphId,
   nodesCount,
   setGraph,
+  applyCollapsedState,
   setPanelOpen,
   setPanelAnchorNodeId,
   setComposerText,
@@ -45,8 +51,12 @@ export function useGraphSessions({
   setLoading,
   setMobileHistoryOpen,
   fitCanvasToGraph,
+  selectedModel,
+  startLlmTask,
+  finishLlmTask,
 }: UseGraphSessionsParams) {
   const [previousChats, setPreviousChats] = useState<ChatSummary[]>([]);
+  const [autoRenamingChatIds, setAutoRenamingChatIds] = useState<Set<string>>(new Set());
 
   const findReusableEmptyGraphId = useCallback(async (): Promise<string | null> => {
     if (graphId && nodesCount === 0) {
@@ -81,14 +91,18 @@ export function useGraphSessions({
     async (targetGraphId: string) => {
       const graph = await getGraph(targetGraphId);
       localStorage.setItem(GRAPH_STORAGE_KEY, targetGraphId);
-      setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
+      setGraph(graph.graph_id, graph.title, graph.title_state, graph.nodes, graph.edges);
+      applyCollapsedState(
+        graph.collapsed_state?.collapsed_targets ?? [],
+        graph.collapsed_state?.collapsed_edge_sources ?? {}
+      );
       fitCanvasToGraph();
       setMobileHistoryOpen(false);
       setPanelOpen(false);
       setPanelAnchorNodeId(null);
       setError(null);
     },
-    [fitCanvasToGraph, setError, setGraph, setMobileHistoryOpen, setPanelAnchorNodeId, setPanelOpen]
+    [applyCollapsedState, fitCanvasToGraph, setError, setGraph, setMobileHistoryOpen, setPanelAnchorNodeId, setPanelOpen]
   );
 
   const startNewChat = useCallback(async () => {
@@ -102,7 +116,11 @@ export function useGraphSessions({
         const created = await createGraph("Chat Tree");
         localStorage.setItem(GRAPH_STORAGE_KEY, created.graph_id);
         const graph = await getGraph(created.graph_id);
-        setGraph(graph.graph_id, graph.title, graph.nodes, graph.edges);
+        setGraph(graph.graph_id, graph.title, graph.title_state, graph.nodes, graph.edges);
+        applyCollapsedState(
+          graph.collapsed_state?.collapsed_targets ?? [],
+          graph.collapsed_state?.collapsed_edge_sources ?? {}
+        );
       }
       fitCanvasToGraph();
       setComposerText("");
@@ -128,6 +146,7 @@ export function useGraphSessions({
     setError,
     setGraph,
     setLoading,
+    applyCollapsedState,
     setPanelAnchorNodeId,
     setPanelOpen,
     setPanelText,
@@ -201,6 +220,34 @@ export function useGraphSessions({
     [graphId, loadGraph, previousChats, refreshGraphList, setError, setLoading]
   );
 
+  const handleAutoRenameChat = useCallback(
+    async (chat: ChatSummary) => {
+      let llmTaskId: string | null = null;
+      try {
+        setLoading(true);
+        setError(null);
+        setAutoRenamingChatIds((prev) => new Set(prev).add(chat.graph_id));
+        llmTaskId = startLlmTask("Generating chat title");
+        await generateGraphTitle(chat.graph_id, selectedModel);
+        if (graphId === chat.graph_id) {
+          await loadGraph(chat.graph_id);
+        }
+        await refreshGraphList();
+      } catch (err) {
+        setError(toErrorMessage(err, "Failed to auto-name chat"));
+      } finally {
+        finishLlmTask(llmTaskId);
+        setAutoRenamingChatIds((prev) => {
+          const next = new Set(prev);
+          next.delete(chat.graph_id);
+          return next;
+        });
+        setLoading(false);
+      }
+    },
+    [finishLlmTask, graphId, loadGraph, refreshGraphList, selectedModel, setError, setLoading, startLlmTask]
+  );
+
   const handleDeleteAllChats = useCallback(async () => {
     if (!window.confirm("Delete all chats?")) return;
     try {
@@ -218,12 +265,14 @@ export function useGraphSessions({
 
   return {
     previousChats,
+    autoRenamingChatIds,
     setPreviousChats,
     refreshGraphList,
     loadGraph,
     startNewChat,
     selectChatFromHistory,
     handleRenameChat,
+    handleAutoRenameChat,
     handleDeleteChat,
     handleDeleteAllChats,
   };

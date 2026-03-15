@@ -5,10 +5,20 @@ interface NodeActionButtonProps {
   ariaLabel: string;
   title?: string;
   onClick: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
   children: ReactNode;
 }
 
-export default function NodeActionButton({ className, ariaLabel, title, onClick, children }: NodeActionButtonProps) {
+export default function NodeActionButton({
+  className,
+  ariaLabel,
+  title,
+  onClick,
+  onMouseEnter,
+  onMouseLeave,
+  children,
+}: NodeActionButtonProps) {
   const consumeEvent = (event: SyntheticEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -26,6 +36,8 @@ export default function NodeActionButton({ className, ariaLabel, title, onClick,
       type="button"
       aria-label={ariaLabel}
       title={title ?? ariaLabel}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {children}
     </button>

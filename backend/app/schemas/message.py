@@ -42,6 +42,7 @@ class CompactBranchRequest(BaseModel):
 class CompactBranchResponse(BaseModel):
     graph_id: str
     title: str
+    title_state: str
     nodes: list[NodePayload]
     edges: list[EdgePayload]
     response_source: Literal["live", "fallback"]
@@ -54,3 +55,4 @@ class SetApiKeyRequest(BaseModel):
 
 class UpdateVariantRequest(BaseModel):
     variant_index: int = Field(ge=0, le=2)
+    lock_selected: bool = False

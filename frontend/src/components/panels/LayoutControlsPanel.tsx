@@ -6,6 +6,7 @@ import {
   type EdgeMotionValue,
   type EdgeTypeValue,
 } from "../../features/graph/edgeStyles";
+import { type ActionPreviewStyle } from "../../features/graph/actionPreview";
 import { DEFAULT_ROLE_SIZING } from "../../features/layout/nodeSizing";
 import type { LayoutSliderTab } from "../../features/layout/types";
 
@@ -56,6 +57,8 @@ interface LayoutControlsPanelProps {
   setAssistantEdgeMotion: (value: EdgeMotionValue) => void;
   assistantEdgeLineStyle: EdgeLineStyleValue;
   setAssistantEdgeLineStyle: (value: EdgeLineStyleValue) => void;
+  actionPreviewStyle: ActionPreviewStyle;
+  setActionPreviewStyle: (value: ActionPreviewStyle) => void;
 }
 
 export default function LayoutControlsPanel({
@@ -105,6 +108,8 @@ export default function LayoutControlsPanel({
   setAssistantEdgeMotion,
   assistantEdgeLineStyle,
   setAssistantEdgeLineStyle,
+  actionPreviewStyle,
+  setActionPreviewStyle,
 }: LayoutControlsPanelProps) {
   if (!visible) return null;
 
@@ -244,6 +249,31 @@ export default function LayoutControlsPanel({
                   title="Double-click to reset"
                 />
               </label>
+              <div className="pt-1">
+                <div className="mb-1 text-[11px] text-stone-700">
+                  Action hover preview: <span className="font-semibold capitalize">{actionPreviewStyle}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {([
+                    ["outline", "Outline"],
+                    ["glow", "Glow"],
+                    ["wash", "Wash"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={`action-preview-${value}`}
+                      type="button"
+                      className={`rounded px-2 py-1 text-[10px] leading-none ${
+                        actionPreviewStyle === value
+                          ? "border border-accent/40 bg-accent/20 text-accent"
+                          : "border border-transparent bg-stone-200 text-stone-700 hover:bg-stone-300"
+                      }`}
+                      onClick={() => setActionPreviewStyle(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </>
           )}
           {tab === "sizing" && (

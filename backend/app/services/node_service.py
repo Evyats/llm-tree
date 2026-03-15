@@ -10,12 +10,14 @@ from app.schemas.common import EdgePayload, NodePayload
 from app.schemas.graph import GraphResponse
 from app.services.context import node_display_text
 from app.services.errors import InvalidNodeRoleError, NodeNotFoundError, VariantLockedError
+from app.services.graph_state import parse_graph_collapsed_state
 from app.services.llm import generate_tree_summary_variants
 from app.services.layout import Y_STEP
 from app.services.payloads import to_edge_payload, to_node_payload
+from app.services.variant_retention import prune_assistant_variants
 
 
-def update_variant_index(db: Session, node_id: str, variant_index: int) -> None:
+def update_variant_index(db: Session, node_id: str, variant_index: int, lock_selected: bool = False) -> None:
     node = db.get(Node, node_id)
     if node is None:
         raise NodeNotFoundError("Node not found")
@@ -24,7 +26,10 @@ def update_variant_index(db: Session, node_id: str, variant_index: int) -> None:
     has_user_child = db.scalar(select(Node.id).where(Node.parent_id == node.id, Node.role == "user").limit(1))
     if has_user_child:
         raise VariantLockedError("Variants are locked after branching from this node")
-    node.variant_index = variant_index
+    if lock_selected:
+        prune_assistant_variants(node, variant_index)
+    else:
+        node.variant_index = variant_index
     db.commit()
 
 
@@ -204,8 +209,10 @@ def compact_node_subtree(
     response = GraphResponse(
         graph_id=root.graph_id,
         title=graph_title,
+        title_state=graph.title_state if graph is not None else "untitled",
         nodes=[to_node_payload(node) for node in graph_nodes],
         edges=[to_edge_payload(edge) for edge in graph_edges],
+        collapsed_state=parse_graph_collapsed_state(graph) if graph is not None else {"collapsed_targets": [], "collapsed_edge_sources": {}},
     )
     return response, source, summary_node.id
 

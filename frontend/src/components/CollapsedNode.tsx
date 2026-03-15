@@ -1,5 +1,6 @@
 import { memo, useLayoutEffect } from "react";
 import { Handle, Position, type NodeProps, useUpdateNodeInternals } from "reactflow";
+import { getActionPreviewClasses, type ActionPreviewStyle } from "../features/graph/actionPreview";
 
 interface CollapsedNodeData {
   label: string;
@@ -10,12 +11,17 @@ interface CollapsedNodeData {
   contextMenuOpen?: boolean;
   onDeleteBranch?: (nodeId: string) => void;
   onToggleContextMenu?: (nodeId: string) => void;
+  onActionPreviewStart?: (nodeId: string, action: "delete") => void;
+  onActionPreviewEnd?: () => void;
+  actionPreviewActive?: boolean;
+  actionPreviewStyle?: ActionPreviewStyle;
 }
 
 const ACTION_RAIL_EXPANDED_WIDTH = 44;
 
 function CollapsedNode({ id, data, selected }: NodeProps<CollapsedNodeData>) {
   const updateNodeInternals = useUpdateNodeInternals();
+  const actionPreviewClass = getActionPreviewClasses(!!data.actionPreviewActive, data.actionPreviewStyle ?? "outline");
 
   useLayoutEffect(() => {
     updateNodeInternals(id);
@@ -41,7 +47,7 @@ function CollapsedNode({ id, data, selected }: NodeProps<CollapsedNodeData>) {
       }}
       className={`rounded-xl border px-3 py-2 shadow-float ${
         selected ? "border-accent bg-amber-50" : "border-amber-400 bg-amber-50"
-      } ${data.compacting ? "pointer-events-none opacity-45 saturate-50" : ""}`}
+      } ${data.compacting ? "pointer-events-none opacity-45 saturate-50" : ""} ${actionPreviewClass}`}
       style={{ width: 132 + (data.contextMenuOpen ? ACTION_RAIL_EXPANDED_WIDTH : 0) }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
@@ -72,9 +78,12 @@ function CollapsedNode({ id, data, selected }: NodeProps<CollapsedNodeData>) {
               type="button"
               data-node-action-button="true"
               className="nodrag nopan flex h-7 w-7 items-center justify-center rounded text-red-700 hover:bg-red-50"
+              onMouseEnter={() => data.onActionPreviewStart?.(id, "delete")}
+              onMouseLeave={() => data.onActionPreviewEnd?.()}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                data.onActionPreviewEnd?.();
                 data.onDeleteBranch?.(id);
               }}
               title="Delete branch"

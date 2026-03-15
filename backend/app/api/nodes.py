@@ -18,7 +18,12 @@ def update_variant_endpoint(
     db: Session = Depends(get_db),
 ) -> dict[str, bool]:
     try:
-        update_variant_index(db, node_id=node_id, variant_index=payload.variant_index)
+        update_variant_index(
+            db,
+            node_id=node_id,
+            variant_index=payload.variant_index,
+            lock_selected=payload.lock_selected,
+        )
     except NodeNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidNodeRoleError as exc:
@@ -72,6 +77,7 @@ def compact_branch_endpoint(
     return CompactBranchResponse(
         graph_id=graph.graph_id,
         title=graph.title,
+        title_state=graph.title_state,
         nodes=graph.nodes,
         edges=graph.edges,
         response_source=source,

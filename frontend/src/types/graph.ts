@@ -31,7 +31,11 @@ export interface GraphEdgePayload {
 export interface GraphResponse {
   graph_id: string;
   title: string;
+  title_state: string;
   nodes: GraphNodePayload[];
   edges: GraphEdgePayload[];
+  collapsed_state: {
+    collapsed_targets: string[];
+    collapsed_edge_sources: Record<string, string>;
+  };
 }
-

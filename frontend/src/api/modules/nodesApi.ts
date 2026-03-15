@@ -9,6 +9,13 @@ export async function updateVariant(nodeId: string, variantIndex: number): Promi
   });
 }
 
+export async function lockVariant(nodeId: string, variantIndex: number): Promise<void> {
+  await request(`/api/nodes/${nodeId}/variant-index`, {
+    method: "PATCH",
+    body: JSON.stringify({ variant_index: variantIndex, lock_selected: true }),
+  });
+}
+
 export async function deleteNodeSubtree(nodeId: string): Promise<void> {
   await request(`/api/nodes/${nodeId}/subtree`, {
     method: "DELETE",

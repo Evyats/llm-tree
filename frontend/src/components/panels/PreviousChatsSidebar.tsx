@@ -5,6 +5,8 @@ interface PreviousChatsSidebarProps {
   chats: ChatSummary[];
   onSelect: (graphId: string) => void;
   onRename: (chat: ChatSummary) => void;
+  onAutoRename: (chat: ChatSummary) => void;
+  autoRenamingChatIds: Set<string>;
   onDelete: (chat: ChatSummary) => void;
   onDeleteAll: () => void;
   onClose?: () => void;
@@ -15,6 +17,8 @@ export default function PreviousChatsSidebar({
   chats,
   onSelect,
   onRename,
+  onAutoRename,
+  autoRenamingChatIds,
   onDelete,
   onDeleteAll,
   onClose,
@@ -58,16 +62,36 @@ export default function PreviousChatsSidebar({
               }`}
               onClick={() => onSelect(chat.graph_id)}
             >
+              {(() => {
+                const autoRenaming = autoRenamingChatIds.has(chat.graph_id);
+                return (
+                  <>
               <div className="truncate font-medium">{chat.title || "Untitled Chat"}</div>
               <div className="mt-1 truncate text-[10px] text-stone-500">{new Date(chat.updated_at).toLocaleString()}</div>
-              <div className="mt-2 flex items-center gap-2">
+              <div className={`mt-2 flex items-center gap-2 ${autoRenaming ? "opacity-55" : ""}`}>
                 <button
-                  className="rounded bg-stone-200 px-2 py-1 text-[10px] text-stone-700 hover:bg-stone-300"
+                  className="rounded bg-amber-100 px-2 py-1 text-[10px] text-amber-800 hover:bg-amber-200 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-500"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAutoRename(chat);
+                  }}
+                  type="button"
+                  disabled={autoRenaming}
+                  aria-label="Auto name chat"
+                  title="Auto name chat"
+                >
+                  <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M10 3l1.6 3.9L16 8.5l-3.3 2.8 1 4.2L10 13.3 6.3 15.5l1-4.2L4 8.5l4.4-1.6L10 3Z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <button
+                  className="rounded bg-stone-200 px-2 py-1 text-[10px] text-stone-700 hover:bg-stone-300 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-500"
                   onClick={(event) => {
                     event.stopPropagation();
                     onRename(chat);
                   }}
                   type="button"
+                  disabled={autoRenaming}
                   aria-label="Rename chat"
                   title="Rename chat"
                 >
@@ -77,12 +101,13 @@ export default function PreviousChatsSidebar({
                   </svg>
                 </button>
                 <button
-                  className="rounded bg-red-100 px-2 py-1 text-[10px] text-red-700 hover:bg-red-200"
+                  className="rounded bg-red-100 px-2 py-1 text-[10px] text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-500"
                   onClick={(event) => {
                     event.stopPropagation();
                     onDelete(chat);
                   }}
                   type="button"
+                  disabled={autoRenaming}
                   aria-label="Remove chat"
                   title="Remove chat"
                 >
@@ -93,6 +118,9 @@ export default function PreviousChatsSidebar({
                   </svg>
                 </button>
               </div>
+                  </>
+                );
+              })()}
             </div>
           ))
         )}

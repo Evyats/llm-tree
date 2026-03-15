@@ -25,13 +25,15 @@ export interface NodeData {
 interface GraphState {
   graphId: string | null;
   title: string;
+  titleState: string;
   nodes: Node<NodeData>[];
   edges: Edge[];
   selectedNodeId: string | null;
   panelOpen: boolean;
   transcript: TranscriptLine[];
   responseSource: "live" | "fallback" | null;
-  setGraph: (graphId: string, title: string, nodes: GraphNodePayload[], edges: GraphEdgePayload[]) => void;
+  setGraph: (graphId: string, title: string, titleState: string, nodes: GraphNodePayload[], edges: GraphEdgePayload[]) => void;
+  setTitle: (title: string, titleState?: string) => void;
   appendEntities: (nodes: GraphNodePayload[], edges: GraphEdgePayload[]) => void;
   setSelectedNode: (nodeId: string | null) => void;
   setNodes: (nodes: Node<NodeData>[]) => void;
@@ -47,16 +49,18 @@ interface GraphState {
 export const useGraphStore = create<GraphState>((set) => ({
   graphId: null,
   title: "Chat Tree",
+  titleState: "untitled",
   nodes: [],
   edges: [],
   selectedNodeId: null,
   panelOpen: false,
   transcript: [],
   responseSource: null,
-  setGraph: (graphId, title, nodes, edges) =>
+  setGraph: (graphId, title, titleState, nodes, edges) =>
     set({
       graphId,
       title,
+      titleState,
       nodes: nodes.map(nodePayloadToFlowNode),
       edges: edges.map(edgePayloadToFlowEdge),
       selectedNodeId: null,
@@ -67,6 +71,7 @@ export const useGraphStore = create<GraphState>((set) => ({
       nodes: [...state.nodes, ...nodes.map(nodePayloadToFlowNode)],
       edges: [...state.edges, ...edges.map(edgePayloadToFlowEdge)],
     })),
+  setTitle: (title, titleState) => set((state) => ({ title, titleState: titleState ?? state.titleState })),
   setSelectedNode: (selectedNodeId) => set({ selectedNodeId }),
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
@@ -90,7 +95,17 @@ export const useGraphStore = create<GraphState>((set) => ({
   lockNodeVariant: (nodeId) =>
     set((state) => ({
       nodes: state.nodes.map((node) =>
-        node.id === nodeId ? { ...node, data: { ...node.data, variantLocked: true } } : node
+        node.id === nodeId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                variants: null,
+                variantIndex: 0,
+                variantLocked: true,
+              },
+            }
+          : node
       ),
     })),
   addElaboratedSelection: (nodeId, selectionText, occurrence) => {

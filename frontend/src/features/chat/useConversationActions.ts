@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { Node } from "reactflow";
 
 import { continueFromNode, continueInPanel } from "../../api/client";
@@ -39,6 +39,9 @@ interface UseConversationActionsParams {
   setModelResponseLoading: (value: boolean) => void;
   setError: (value: string | null) => void;
   clearElaborateAction: () => void;
+  startLlmTask: (label: string) => string;
+  finishLlmTask: (taskId: string | null) => void;
+  maybeAutoNameGraph: (nextNodes: Node<NodeData>[]) => Promise<void>;
 }
 
 export function useConversationActions({
@@ -67,10 +70,23 @@ export function useConversationActions({
   setModelResponseLoading,
   setError,
   clearElaborateAction,
+  startLlmTask,
+  finishLlmTask,
+  maybeAutoNameGraph,
 }: UseConversationActionsParams) {
   const requestCountRef = useRef(0);
   const modelRequestCountRef = useRef(0);
+  const composerTextRef = useRef(composerText);
+  const panelTextRef = useRef(panelText);
   const isTempId = (id: string | null | undefined): id is string => Boolean(id && id.startsWith("temp-"));
+
+  useEffect(() => {
+    composerTextRef.current = composerText;
+  }, [composerText]);
+
+  useEffect(() => {
+    panelTextRef.current = panelText;
+  }, [panelText]);
 
   const beginRequest = useCallback(() => {
     requestCountRef.current += 1;
@@ -128,6 +144,26 @@ export function useConversationActions({
     [nodesById]
   );
 
+  const pruneAssistantVariantsInNodes = useCallback((items: Node<NodeData>[], nodeId: string | null) => {
+    if (!nodeId) {
+      return items;
+    }
+    return items.map((node) => {
+      if (node.id !== nodeId || node.data.role !== "assistant") {
+        return node;
+      }
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          variants: null,
+          variantIndex: 0,
+          variantLocked: true,
+        },
+      };
+    });
+  }, []);
+
   const sendContinue = useCallback(
     async (mode: "normal" | "elaboration", highlightedText?: string) => {
       if (!graphId) return;
@@ -165,10 +201,13 @@ export function useConversationActions({
           tempUserId: optimistic.ids.tempUserId,
           tempAssistantId: optimistic.ids.tempAssistantId,
         });
+      let llmTaskId: string | null = null;
       try {
         beginRequest();
         beginModelRequest();
+        llmTaskId = startLlmTask(mode === "elaboration" ? "Generating elaboration" : "Generating reply");
         setError(null);
+        composerTextRef.current = "";
         setComposerText("");
         setNodes(optimistic.nodes);
         setEdges(optimistic.edges);
@@ -187,23 +226,27 @@ export function useConversationActions({
         if (!isRequestStillRelevant()) {
           return;
         }
-        setNodes(next.nodes);
+        setNodes(pruneAssistantVariantsInNodes(next.nodes, continueFromNodeId));
         setEdges(next.edges);
         setSelectedNode(response.created_assistant_node.id);
         setResponseSource(response.response_source);
         setTranscript(response.transcript_window);
-        setComposerText("");
         clearElaborateAction();
+        await maybeAutoNameGraph(next.nodes);
         await refreshGraphList();
       } catch (err) {
         if (isRequestStillRelevant()) {
           const next = removeOptimisticBranch(getLatestNodes(), getLatestEdges(), optimistic.ids);
           setNodes(next.nodes);
           setEdges(next.edges);
-          setComposerText(previousComposerText);
+          if (composerTextRef.current.trim().length === 0) {
+            composerTextRef.current = previousComposerText;
+            setComposerText(previousComposerText);
+          }
           setError(toErrorMessage(err, "Failed to continue conversation"));
         }
       } finally {
+        finishLlmTask(llmTaskId);
         endModelRequest();
         endRequest();
       }
@@ -228,11 +271,15 @@ export function useConversationActions({
       setEdges,
       clearElaborateAction,
       setError,
-      setNodes,
-      setResponseSource,
-      setSelectedNode,
-      setTranscript,
-      waitForFallbackDelay,
+        finishLlmTask,
+        setNodes,
+        setResponseSource,
+        setSelectedNode,
+        startLlmTask,
+        setTranscript,
+        maybeAutoNameGraph,
+        waitForFallbackDelay,
+        pruneAssistantVariantsInNodes,
     ]
   );
 
@@ -271,10 +318,13 @@ export function useConversationActions({
         tempUserId: optimistic.ids.tempUserId,
         tempAssistantId: optimistic.ids.tempAssistantId,
       });
+    let llmTaskId: string | null = null;
     try {
       beginRequest();
       beginModelRequest();
+      llmTaskId = startLlmTask("Generating context reply");
       setError(null);
+      panelTextRef.current = "";
       setPanelText("");
       setNodes(optimistic.nodes);
       setEdges(optimistic.edges);
@@ -291,23 +341,27 @@ export function useConversationActions({
       if (!isRequestStillRelevant()) {
         return;
       }
-      setNodes(next.nodes);
+      setNodes(pruneAssistantVariantsInNodes(next.nodes, persistedAnchorNodeId));
       setEdges(next.edges);
       setPanelAnchorNodeId(response.created_assistant_node.id);
       setSelectedNode(response.created_assistant_node.id);
       setTranscript(response.transcript_window);
       setResponseSource(response.response_source);
-      setPanelText("");
+      await maybeAutoNameGraph(next.nodes);
       await refreshGraphList();
     } catch (err) {
       if (isRequestStillRelevant()) {
         const next = removeOptimisticBranch(getLatestNodes(), getLatestEdges(), optimistic.ids);
         setNodes(next.nodes);
         setEdges(next.edges);
-        setPanelText(previousPanelText);
+        if (panelTextRef.current.trim().length === 0) {
+          panelTextRef.current = previousPanelText;
+          setPanelText(previousPanelText);
+        }
         setError(toErrorMessage(err, "Failed to continue in panel"));
       }
     } finally {
+      finishLlmTask(llmTaskId);
       endModelRequest();
       endRequest();
     }
@@ -329,13 +383,17 @@ export function useConversationActions({
     resolvePersistedAnchorId,
     setEdges,
     setError,
+    finishLlmTask,
     setNodes,
     setPanelAnchorNodeId,
     setPanelText,
     setResponseSource,
     setSelectedNode,
+    startLlmTask,
     setTranscript,
+    maybeAutoNameGraph,
     waitForFallbackDelay,
+    pruneAssistantVariantsInNodes,
   ]);
 
   return {

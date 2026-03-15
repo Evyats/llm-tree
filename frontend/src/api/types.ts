@@ -3,7 +3,15 @@ import type { GraphEdgePayload, GraphNodePayload } from "../types/graph";
 export interface ChatSummary {
   graph_id: string;
   title: string;
+  title_state: string;
   updated_at: string;
+}
+
+export interface GenerateGraphTitleResponse {
+  graph_id: string;
+  title: string;
+  title_state: string;
+  response_source: "live" | "fallback";
 }
 
 export interface ContinueFromNodeRequest {
@@ -31,6 +39,7 @@ export interface AvailableModelsResponse {
 export interface CompactBranchResponse {
   graph_id: string;
   title: string;
+  title_state: string;
   nodes: GraphNodePayload[];
   edges: GraphEdgePayload[];
   response_source: "live" | "fallback";
