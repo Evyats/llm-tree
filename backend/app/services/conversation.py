@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -8,6 +7,7 @@ from app.models.node import Node
 from app.schemas.common import EdgePayload, NodePayload, TranscriptLine
 from app.services.context import node_display_text, path_to_node, transcript_from_path
 from app.services.errors import GraphNotFoundError
+from app.services.graph_snapshots import list_graph_edges, list_graph_nodes, touch_graph
 from app.services.graph_state import parse_graph_collapsed_state, write_graph_collapsed_state
 from app.services.layout import assistant_position, next_user_position
 from app.services.llm import generate_chat_title, generate_variants
@@ -32,11 +32,11 @@ def get_graph_or_404(db: Session, graph_id: str) -> Graph:
 
 def get_graph_payload(db: Session, graph_id: str) -> tuple[str, str, str, list[NodePayload], list[EdgePayload], dict]:
     graph = get_graph_or_404(db, graph_id)
-    nodes = db.scalars(select(Node).where(Node.graph_id == graph.id).order_by(Node.created_at)).all()
+    nodes = list_graph_nodes(db, graph.id)
     if _prune_fixed_assistant_variants(db, graph.id, nodes):
-        graph.updated_at = datetime.now(timezone.utc)
+        touch_graph(graph)
         db.commit()
-    edges = db.scalars(select(Edge).where(Edge.graph_id == graph.id).order_by(Edge.created_at)).all()
+    edges = list_graph_edges(db, graph.id)
     collapsed_state = _sanitize_graph_collapsed_state(graph, nodes)
     return graph.id, graph.title, graph.title_state, [to_node_payload(n) for n in nodes], [to_edge_payload(e) for e in edges], collapsed_state.model_dump()
 
@@ -49,7 +49,7 @@ def rename_graph(db: Session, graph_id: str, title: str) -> Graph:
     graph = get_graph_or_404(db, graph_id)
     graph.title = title.strip() or "Untitled Graph"
     graph.title_state = "manual"
-    graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
     db.commit()
     db.refresh(graph)
     return graph
@@ -74,7 +74,7 @@ def generate_graph_title(
     )
     graph.title = title.strip() or "Untitled Chat"
     graph.title_state = "auto"
-    graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
     db.commit()
     db.refresh(graph)
     return graph, source
@@ -92,7 +92,7 @@ def update_graph_collapsed_state(
         collapsed_targets=collapsed_targets,
         collapsed_edge_sources=collapsed_edge_sources,
     )
-    graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
     db.commit()
     db.refresh(graph)
     return graph
@@ -154,7 +154,7 @@ def continue_conversation(
     )
     edges = _create_edges(db=db, graph=graph, continue_from_node_id=continue_from_node_id, user_node=user_node, assistant_node=assistant_node)
 
-    graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
     db.commit()
     db.refresh(user_node)
     db.refresh(assistant_node)
@@ -225,7 +225,7 @@ def _sanitize_graph_collapsed_state(graph: Graph, nodes: list[Node]):
         or collapsed_edge_sources != state.collapsed_edge_sources
     ):
         write_graph_collapsed_state(graph, collapsed_targets, collapsed_edge_sources)
-        graph.updated_at = datetime.now(timezone.utc)
+        touch_graph(graph)
         db.commit()
     return parse_graph_collapsed_state(graph)
 

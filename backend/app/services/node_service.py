@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -10,10 +8,11 @@ from app.schemas.common import EdgePayload, NodePayload
 from app.schemas.graph import GraphResponse
 from app.services.context import node_display_text
 from app.services.errors import InvalidNodeRoleError, NodeNotFoundError, VariantLockedError
-from app.services.graph_state import parse_graph_collapsed_state
+from app.services.graph_snapshots import build_graph_response, touch_graph
 from app.services.llm import generate_tree_summary_variants, revise_user_selection
 from app.services.layout import Y_STEP
 from app.services.payloads import to_edge_payload, to_node_payload
+from app.services.tree_ops import build_path_to_root, collect_subtree_node_ids
 from app.services.variant_retention import prune_assistant_variants
 
 
@@ -33,19 +32,6 @@ def update_variant_index(db: Session, node_id: str, variant_index: int, lock_sel
     db.commit()
 
 
-def collect_subtree_node_ids(db: Session, root_id: str) -> set[str]:
-    node_ids_to_delete: set[str] = {root_id}
-    frontier = [root_id]
-    while frontier:
-        children = db.scalars(select(Node.id).where(Node.parent_id.in_(frontier))).all()
-        new_ids = [child_id for child_id in children if child_id not in node_ids_to_delete]
-        if not new_ids:
-            break
-        node_ids_to_delete.update(new_ids)
-        frontier = new_ids
-    return node_ids_to_delete
-
-
 def delete_node_subtree(db: Session, node_id: str) -> None:
     root = db.get(Node, node_id)
     if root is None:
@@ -58,8 +44,7 @@ def delete_node_subtree(db: Session, node_id: str) -> None:
     db.execute(delete(Node).where(Node.id.in_(node_ids_to_delete)))
 
     graph = db.get(Graph, root.graph_id)
-    if graph is not None:
-        graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
 
     db.commit()
 
@@ -69,14 +54,7 @@ def extract_path_to_new_tree(db: Session, node_id: str) -> tuple[list[NodePayloa
     if target is None:
         raise NodeNotFoundError("Node not found")
 
-    path: list[Node] = []
-    current = target
-    while current is not None:
-        path.append(current)
-        if current.parent_id is None:
-            break
-        current = db.get(Node, current.parent_id)
-    path.reverse()
+    path = build_path_to_root(db, target)
 
     graph_nodes = db.scalars(select(Node).where(Node.graph_id == target.graph_id)).all()
     base_x = (max((node.position_x for node in graph_nodes), default=0.0) + 380.0)
@@ -128,8 +106,7 @@ def extract_path_to_new_tree(db: Session, node_id: str) -> tuple[list[NodePayloa
         db.add_all(created_edges)
 
     graph = db.get(Graph, target.graph_id)
-    if graph is not None:
-        graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
 
     db.commit()
 
@@ -198,22 +175,12 @@ def compact_node_subtree(
         )
 
     graph = db.get(Graph, root.graph_id)
-    if graph is not None:
-        graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
 
     db.commit()
-
-    graph_nodes = db.scalars(select(Node).where(Node.graph_id == root.graph_id).order_by(Node.created_at)).all()
-    graph_edges = db.scalars(select(Edge).where(Edge.graph_id == root.graph_id).order_by(Edge.created_at)).all()
-    graph_title = graph.title if graph is not None else "Untitled Graph"
-    response = GraphResponse(
-        graph_id=root.graph_id,
-        title=graph_title,
-        title_state=graph.title_state if graph is not None else "untitled",
-        nodes=[to_node_payload(node) for node in graph_nodes],
-        edges=[to_edge_payload(edge) for edge in graph_edges],
-        collapsed_state=parse_graph_collapsed_state(graph) if graph is not None else {"collapsed_targets": [], "collapsed_edge_sources": {}},
-    )
+    if graph is None:
+        raise NodeNotFoundError("Graph not found")
+    response = build_graph_response(db, graph)
     return response, source, summary_node.id
 
 
@@ -241,8 +208,7 @@ def revise_user_node_selection(
     node.user_text = _replace_selected_occurrence(message_text, selected_text, revised_text, occurrence)
 
     graph = db.get(Graph, node.graph_id)
-    if graph is not None:
-        graph.updated_at = datetime.now(timezone.utc)
+    touch_graph(graph)
 
     db.commit()
     db.refresh(node)

@@ -12,6 +12,16 @@ import {
   removeOptimisticBranch,
   reconcileOptimisticBranch,
 } from "./optimisticBranch";
+import {
+  appendUserLine,
+  buildOptimisticStartPosition,
+  createFallbackDelayWaiter,
+  createPersistedAnchorResolver,
+  createTempId,
+  isPendingAssistantAnchor,
+  pruneAssistantVariantsInNodes,
+  restoreDraftIfStillEmpty,
+} from "./conversationActionUtils";
 import { buildTranscriptUntilNode } from "./transcript";
 
 interface UseConversationActionsParams {
@@ -81,7 +91,6 @@ export function useConversationActions({
   const modelRequestCountRef = useRef(0);
   const composerTextRef = useRef(composerText);
   const panelTextRef = useRef(panelText);
-  const isTempId = (id: string | null | undefined): id is string => Boolean(id && id.startsWith("temp-"));
 
   useEffect(() => {
     composerTextRef.current = composerText;
@@ -111,66 +120,13 @@ export function useConversationActions({
     setModelResponseLoading(modelRequestCountRef.current > 0);
   }, [setModelResponseLoading]);
 
-  const resolvePersistedAnchorId = useCallback(
-    (startId: string | null): string | null => {
-      let cursor = startId;
-      const seen = new Set<string>();
-      while (cursor) {
-        if (seen.has(cursor)) return null;
-        seen.add(cursor);
-        if (!isTempId(cursor)) return cursor;
-        cursor = nodesById.get(cursor)?.data.parentId ?? null;
-      }
-      return null;
-    },
-    [nodesById]
-  );
-
-  const generateTempId = () =>
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? `temp-${crypto.randomUUID()}`
-      : `temp-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-  const waitForFallbackDelay = useCallback(async () => {
-    if (selectedModel !== "fallback" || fallbackDelayMs <= 0) {
-      return;
-    }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, fallbackDelayMs));
-  }, [fallbackDelayMs, selectedModel]);
-
-  const isPendingAssistantAnchor = useCallback(
-    (nodeId: string | null) => {
-      if (!nodeId) return false;
-      const node = nodesById.get(nodeId);
-      return node?.data.role === "assistant" && node.data.pending === true;
-    },
-    [nodesById]
-  );
-
-  const pruneAssistantVariantsInNodes = useCallback((items: Node<NodeData>[], nodeId: string | null) => {
-    if (!nodeId) {
-      return items;
-    }
-    return items.map((node) => {
-      if (node.id !== nodeId || node.data.role !== "assistant") {
-        return node;
-      }
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          variants: null,
-          variantIndex: 0,
-          variantLocked: true,
-        },
-      };
-    });
-  }, []);
+  const resolvePersistedAnchorId = useCallback(createPersistedAnchorResolver(nodesById), [nodesById]);
+  const waitForFallbackDelay = useCallback(createFallbackDelayWaiter(selectedModel, fallbackDelayMs), [fallbackDelayMs, selectedModel]);
 
   const sendContinue = useCallback(
     async (mode: "normal" | "elaboration", highlightedText?: string) => {
       if (!graphId) return;
-      if (isPendingAssistantAnchor(selectedNodeId)) {
+      if (isPendingAssistantAnchor(nodesById, selectedNodeId)) {
         setError("Please wait for the assistant response to finish before continuing from this node.");
         return;
       }
@@ -185,9 +141,7 @@ export function useConversationActions({
       const baseEdges = getLatestEdges();
       const baseNodesById = new Map(baseNodes.map((node) => [node.id, node]));
       const continueFromNodeId = resolvePersistedAnchorId(selectedNodeId);
-      const parentPos = continueFromNodeId ? baseNodesById.get(continueFromNodeId)?.position : null;
-      const baseX = parentPos?.x ?? 0;
-      const baseY = (parentPos?.y ?? 80) + 170;
+      const { baseX, baseY } = buildOptimisticStartPosition(baseNodesById, continueFromNodeId);
       const optimistic = buildOptimisticBranch(
         baseNodes,
         baseEdges,
@@ -195,7 +149,7 @@ export function useConversationActions({
         userText,
         baseX,
         baseY,
-        generateTempId,
+        createTempId,
         mode
       );
       optimistic.nodes[optimistic.nodes.length - 2].data.highlightedText = highlightedText ?? null;
@@ -250,10 +204,7 @@ export function useConversationActions({
           const next = removeOptimisticBranch(getLatestNodes(), getLatestEdges(), optimistic.ids);
           setNodes(next.nodes);
           setEdges(next.edges);
-          if (composerTextRef.current.trim().length === 0) {
-            composerTextRef.current = previousComposerText;
-            setComposerText(previousComposerText);
-          }
+          restoreDraftIfStillEmpty(composerTextRef, previousComposerText, setComposerText);
           setError(toErrorMessage(err, "Failed to continue conversation"));
         }
       } finally {
@@ -271,7 +222,6 @@ export function useConversationActions({
       getLatestEdges,
       getLatestNodes,
       graphId,
-      isPendingAssistantAnchor,
       nodesById,
       refreshGraphList,
       resolvePersistedAnchorId,
@@ -290,14 +240,13 @@ export function useConversationActions({
         setTranscript,
       maybeAutoNameGraph,
       centerNodeInView,
-        waitForFallbackDelay,
-        pruneAssistantVariantsInNodes,
+      waitForFallbackDelay,
     ]
   );
 
   const sendPanelContinue = useCallback(async () => {
     if (!graphId || !panelAnchorNodeId) return;
-    if (isPendingAssistantAnchor(panelAnchorNodeId)) {
+    if (isPendingAssistantAnchor(nodesById, panelAnchorNodeId)) {
       setError("Please wait for the assistant response to finish before continuing from this node.");
       return;
     }
@@ -311,9 +260,7 @@ export function useConversationActions({
       setError("Please wait for the pending response to finish, then try again.");
       return;
     }
-    const anchorPos = baseNodesById.get(persistedAnchorNodeId)?.position;
-    const baseX = anchorPos?.x ?? 0;
-    const baseY = (anchorPos?.y ?? 80) + 170;
+    const { baseX, baseY } = buildOptimisticStartPosition(baseNodesById, persistedAnchorNodeId);
     const userText = panelText.trim();
     const previousTranscript = buildTranscriptUntilNode(baseNodes, persistedAnchorNodeId);
     const optimistic = buildOptimisticBranch(
@@ -323,7 +270,7 @@ export function useConversationActions({
       userText,
       baseX,
       baseY,
-      generateTempId,
+      createTempId,
       "normal"
     );
     const isRequestStillRelevant = () =>
@@ -342,13 +289,7 @@ export function useConversationActions({
       setNodes(optimistic.nodes);
       setEdges(optimistic.edges);
       setSelectedNode(optimistic.ids.tempAssistantId);
-      setTranscript([
-        ...previousTranscript,
-        {
-          role: "user",
-          content: userText,
-        },
-      ]);
+      setTranscript(appendUserLine(previousTranscript, userText));
       const response = await continueInPanel({
         graph_id: graphId,
         anchor_node_id: persistedAnchorNodeId,
@@ -379,10 +320,7 @@ export function useConversationActions({
         const next = removeOptimisticBranch(getLatestNodes(), getLatestEdges(), optimistic.ids);
         setNodes(next.nodes);
         setEdges(next.edges);
-        if (panelTextRef.current.trim().length === 0) {
-          panelTextRef.current = previousPanelText;
-          setPanelText(previousPanelText);
-        }
+        restoreDraftIfStillEmpty(panelTextRef, previousPanelText, setPanelText);
         setTranscript(previousTranscript);
         setError(toErrorMessage(err, "Failed to continue in panel"));
       }
@@ -399,7 +337,6 @@ export function useConversationActions({
     getLatestEdges,
     getLatestNodes,
     graphId,
-    isPendingAssistantAnchor,
     nodesById,
     panelAnchorNodeId,
     panelText,

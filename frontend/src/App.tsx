@@ -66,7 +66,10 @@ import { buildNodeDisplayText } from "./features/graph/nodeTextPreview";
 import { applyFoldForEdgeWithController, applyFoldForNodeWithController } from "./features/graph/foldController";
 import { buildNodeMap, getAssistantNodesWithUserBranch } from "./features/graph/nodeSelectors";
 import type { GraphNodeUiData } from "./features/graph/nodeUi";
-import { normalizeSelectionToWordBoundariesDetailed } from "./features/selection/normalizeSelection";
+import {
+  type ElaborateAction,
+} from "./features/selection/menu";
+import { useSelectionMenu } from "./features/selection/useSelectionMenu";
 import {
   COLLAPSED_PREVIEW_TEXT_MAX,
   DEFAULT_FIT_VIEW_BUTTON_PADDING,
@@ -89,40 +92,6 @@ import { useViewportControls } from "./features/layout/useViewportControls";
 import { useCollapsedBranches } from "./features/graph/useCollapsedBranches";
 import type { LayoutSliderTab } from "./features/layout/types";
 import { useGraphStore, type NodeData } from "./store/useGraphStore";
-
-interface ElaborateAction {
-  nodeId: string;
-  role: "user" | "assistant";
-  text: string;
-  occurrence: number;
-  x: number;
-  y: number;
-}
-
-interface SelectionMenuCandidate {
-  nodeId: string;
-  role: "user" | "assistant";
-  text: string;
-  occurrence: number;
-  x: number;
-  y: number;
-  range: Range;
-}
-
-const SELECTION_MENU_OPEN_DELAY_MS = 60;
-
-function findSelectionTextRoot(node: globalThis.Node | null): HTMLElement | null {
-  if (!node) {
-    return null;
-  }
-  if (node instanceof HTMLElement && node.matches('[data-node-text-content="true"]')) {
-    return node;
-  }
-  if (node.parentElement) {
-    return node.parentElement.closest('[data-node-text-content="true"]');
-  }
-  return null;
-}
 
 export default function App() {
   const {
@@ -156,7 +125,6 @@ export default function App() {
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("fallback");
-  const [elaborateAction, setElaborateAction] = useState<ElaborateAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [fixedMode, setFixedMode] = useState(true);
@@ -192,6 +160,7 @@ export default function App() {
   const [actionPreviewNodeIds, setActionPreviewNodeIds] = useState<Set<string>>(new Set());
   const [expandedTextNodeIds, setExpandedTextNodeIds] = useState<Set<string>>(new Set());
   const [compactingNodeIds, setCompactingNodeIds] = useState<Set<string>>(new Set());
+  const { elaborateAction, setElaborateAction, clearElaborateAction } = useSelectionMenu();
   const {
     collapsedTargets,
     collapsedEdgeSources,
@@ -217,8 +186,6 @@ export default function App() {
   const collapsePersistTimerRef = useRef<number | null>(null);
   const collapsePersistSignatureRef = useRef<string>("");
   const autoNamingGraphIdRef = useRef<string | null>(null);
-  const preservedSelectionRangeRef = useRef<Range | null>(null);
-  const selectionMenuTimerRef = useRef<number | null>(null);
 
   const buildCollapsedStateSignature = useCallback(
     (targets: Iterable<string>, edgeSources: Iterable<[string, string]>) =>
@@ -612,114 +579,6 @@ export default function App() {
   }, [collapsedTargets, nodes]);
 
   useEffect(() => {
-    if (!elaborateAction || !preservedSelectionRangeRef.current) {
-      return;
-    }
-    const range = preservedSelectionRangeRef.current;
-    const raf = requestAnimationFrame(() => {
-      const selection = window.getSelection();
-      if (!selection) {
-        return;
-      }
-      selection.removeAllRanges();
-      selection.addRange(range);
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [elaborateAction]);
-
-  useEffect(() => {
-    const clearPendingSelectionMenu = () => {
-      if (selectionMenuTimerRef.current !== null) {
-        window.clearTimeout(selectionMenuTimerRef.current);
-        selectionMenuTimerRef.current = null;
-      }
-    };
-
-    const buildSelectionMenuCandidate = (): SelectionMenuCandidate | null => {
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        return null;
-      }
-      const anchorRoot = findSelectionTextRoot(selection.anchorNode);
-      const focusRoot = findSelectionTextRoot(selection.focusNode);
-      if (!anchorRoot || anchorRoot !== focusRoot) {
-        return null;
-      }
-      const nodeId = anchorRoot.dataset.nodeId;
-      const role = anchorRoot.dataset.nodeRole;
-      if (!nodeId || (role !== "assistant" && role !== "user")) {
-        return null;
-      }
-      const normalized = normalizeSelectionToWordBoundariesDetailed(selection, anchorRoot);
-      if (!normalized) {
-        return null;
-      }
-      const range = selection.getRangeAt(0).cloneRange();
-      const rect = range.getBoundingClientRect();
-      const clientRect = rect.width > 0 || rect.height > 0 ? rect : range.getClientRects()[0];
-      if (!clientRect) {
-        return null;
-      }
-      return {
-        nodeId,
-        role,
-        text: normalized.text,
-        occurrence: normalized.occurrence,
-        x: clientRect.left + clientRect.width / 2,
-        y: clientRect.top,
-        range,
-      };
-    };
-
-    const scheduleSelectionMenu = (event: MouseEvent) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        (target.closest('[data-selection-menu="true"]') ||
-          target.closest("input, textarea, [contenteditable='true'], [contenteditable='']"))
-      ) {
-        return;
-      }
-      clearPendingSelectionMenu();
-      requestAnimationFrame(() => {
-        const candidate = buildSelectionMenuCandidate();
-        if (!candidate) {
-          return;
-        }
-        preservedSelectionRangeRef.current = candidate.range;
-        requestAnimationFrame(() => {
-          const selection = window.getSelection();
-          if (!selection) {
-            return;
-          }
-          selection.removeAllRanges();
-          selection.addRange(candidate.range);
-        });
-        selectionMenuTimerRef.current = window.setTimeout(() => {
-          setElaborateAction({
-            nodeId: candidate.nodeId,
-            role: candidate.role,
-            text: candidate.text,
-            occurrence: candidate.occurrence,
-            x: candidate.x,
-            y: candidate.y,
-          });
-          selectionMenuTimerRef.current = null;
-        }, SELECTION_MENU_OPEN_DELAY_MS);
-      });
-    };
-
-    document.addEventListener("mouseup", scheduleSelectionMenu, true);
-    return () => {
-      document.removeEventListener("mouseup", scheduleSelectionMenu, true);
-      clearPendingSelectionMenu();
-    };
-  }, []);
-
-  useEffect(() => {
     if (!graphId || !collapseHydratedRef.current) {
       return;
     }
@@ -974,7 +833,7 @@ export default function App() {
     setLoading,
     setModelResponseLoading,
     setError,
-    clearElaborateAction: () => setElaborateAction(null),
+    clearElaborateAction,
     startLlmTask,
     finishLlmTask,
     maybeAutoNameGraph,
@@ -1838,10 +1697,7 @@ export default function App() {
         onReviseClick={(action) => {
           void handleReviseSelectedText(action);
         }}
-        onClose={() => {
-          preservedSelectionRangeRef.current = null;
-          setElaborateAction(null);
-        }}
+        onClose={clearElaborateAction}
       />
 
       <WheelModeBanner
