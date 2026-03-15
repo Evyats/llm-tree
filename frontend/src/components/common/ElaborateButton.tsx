@@ -49,6 +49,7 @@ export default function ElaborateButton({ action, onElaborateClick, onReviseClic
   return (
     <div
       ref={popupRef}
+      data-selection-menu="true"
       className="fixed z-30 flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded border border-stone-300 bg-paper/95 p-1 shadow-float backdrop-blur"
       style={{ left: action.x, top: action.y }}
       onMouseDown={preserveSelection}
@@ -66,7 +67,7 @@ export default function ElaborateButton({ action, onElaborateClick, onReviseClic
         </button>
       ) : (
         <button
-          className="rounded bg-stone-200 px-2 py-1 text-xs text-stone-700 hover:bg-stone-300"
+          className="rounded border border-warm/40 bg-paper px-2 py-1 text-xs text-warm hover:bg-warm/10"
           onClick={() => onReviseClick(action)}
           type="button"
           onMouseDown={preserveSelection}

@@ -66,6 +66,7 @@ import { buildNodeDisplayText } from "./features/graph/nodeTextPreview";
 import { applyFoldForEdgeWithController, applyFoldForNodeWithController } from "./features/graph/foldController";
 import { buildNodeMap, getAssistantNodesWithUserBranch } from "./features/graph/nodeSelectors";
 import type { GraphNodeUiData } from "./features/graph/nodeUi";
+import { normalizeSelectionToWordBoundariesDetailed } from "./features/selection/normalizeSelection";
 import {
   COLLAPSED_PREVIEW_TEXT_MAX,
   DEFAULT_FIT_VIEW_BUTTON_PADDING,
@@ -98,6 +99,31 @@ interface ElaborateAction {
   y: number;
 }
 
+interface SelectionMenuCandidate {
+  nodeId: string;
+  role: "user" | "assistant";
+  text: string;
+  occurrence: number;
+  x: number;
+  y: number;
+  range: Range;
+}
+
+const SELECTION_MENU_OPEN_DELAY_MS = 60;
+
+function findSelectionTextRoot(node: globalThis.Node | null): HTMLElement | null {
+  if (!node) {
+    return null;
+  }
+  if (node instanceof HTMLElement && node.matches('[data-node-text-content="true"]')) {
+    return node;
+  }
+  if (node.parentElement) {
+    return node.parentElement.closest('[data-node-text-content="true"]');
+  }
+  return null;
+}
+
 export default function App() {
   const {
     graphId,
@@ -117,7 +143,6 @@ export default function App() {
     setEdges,
     updateNodeVariant: updateVariantLocal,
     lockNodeVariant,
-    addElaboratedSelection,
     setPanelOpen,
     setTranscript,
     setResponseSource,
@@ -192,6 +217,8 @@ export default function App() {
   const collapsePersistTimerRef = useRef<number | null>(null);
   const collapsePersistSignatureRef = useRef<string>("");
   const autoNamingGraphIdRef = useRef<string | null>(null);
+  const preservedSelectionRangeRef = useRef<Range | null>(null);
+  const selectionMenuTimerRef = useRef<number | null>(null);
 
   const buildCollapsedStateSignature = useCallback(
     (targets: Iterable<string>, edgeSources: Iterable<[string, string]>) =>
@@ -583,6 +610,114 @@ export default function App() {
       return prev;
     });
   }, [collapsedTargets, nodes]);
+
+  useEffect(() => {
+    if (!elaborateAction || !preservedSelectionRangeRef.current) {
+      return;
+    }
+    const range = preservedSelectionRangeRef.current;
+    const raf = requestAnimationFrame(() => {
+      const selection = window.getSelection();
+      if (!selection) {
+        return;
+      }
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [elaborateAction]);
+
+  useEffect(() => {
+    const clearPendingSelectionMenu = () => {
+      if (selectionMenuTimerRef.current !== null) {
+        window.clearTimeout(selectionMenuTimerRef.current);
+        selectionMenuTimerRef.current = null;
+      }
+    };
+
+    const buildSelectionMenuCandidate = (): SelectionMenuCandidate | null => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        return null;
+      }
+      const anchorRoot = findSelectionTextRoot(selection.anchorNode);
+      const focusRoot = findSelectionTextRoot(selection.focusNode);
+      if (!anchorRoot || anchorRoot !== focusRoot) {
+        return null;
+      }
+      const nodeId = anchorRoot.dataset.nodeId;
+      const role = anchorRoot.dataset.nodeRole;
+      if (!nodeId || (role !== "assistant" && role !== "user")) {
+        return null;
+      }
+      const normalized = normalizeSelectionToWordBoundariesDetailed(selection, anchorRoot);
+      if (!normalized) {
+        return null;
+      }
+      const range = selection.getRangeAt(0).cloneRange();
+      const rect = range.getBoundingClientRect();
+      const clientRect = rect.width > 0 || rect.height > 0 ? rect : range.getClientRects()[0];
+      if (!clientRect) {
+        return null;
+      }
+      return {
+        nodeId,
+        role,
+        text: normalized.text,
+        occurrence: normalized.occurrence,
+        x: clientRect.left + clientRect.width / 2,
+        y: clientRect.top,
+        range,
+      };
+    };
+
+    const scheduleSelectionMenu = (event: MouseEvent) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        (target.closest('[data-selection-menu="true"]') ||
+          target.closest("input, textarea, [contenteditable='true'], [contenteditable='']"))
+      ) {
+        return;
+      }
+      clearPendingSelectionMenu();
+      requestAnimationFrame(() => {
+        const candidate = buildSelectionMenuCandidate();
+        if (!candidate) {
+          return;
+        }
+        preservedSelectionRangeRef.current = candidate.range;
+        requestAnimationFrame(() => {
+          const selection = window.getSelection();
+          if (!selection) {
+            return;
+          }
+          selection.removeAllRanges();
+          selection.addRange(candidate.range);
+        });
+        selectionMenuTimerRef.current = window.setTimeout(() => {
+          setElaborateAction({
+            nodeId: candidate.nodeId,
+            role: candidate.role,
+            text: candidate.text,
+            occurrence: candidate.occurrence,
+            x: candidate.x,
+            y: candidate.y,
+          });
+          selectionMenuTimerRef.current = null;
+        }, SELECTION_MENU_OPEN_DELAY_MS);
+      });
+    };
+
+    document.addEventListener("mouseup", scheduleSelectionMenu, true);
+    return () => {
+      document.removeEventListener("mouseup", scheduleSelectionMenu, true);
+      clearPendingSelectionMenu();
+    };
+  }, []);
 
   useEffect(() => {
     if (!graphId || !collapseHydratedRef.current) {
@@ -1209,11 +1344,6 @@ export default function App() {
       const baseNodes = nodes
         .filter((node) => !hiddenNodeIds.has(node.id))
         .map((node) => {
-          const activeSelectionHighlight =
-            elaborateAction && elaborateAction.nodeId === node.id
-              ? [{ text: elaborateAction.text, occurrence: elaborateAction.occurrence }]
-              : [];
-          const mergedHighlights = [...(node.data.elaboratedSelections ?? []), ...activeSelectionHighlight];
           const expanded = expandedTextNodeIds.has(node.id);
           const display = buildNodeDisplayText(node.data.text ?? "", expanded);
 
@@ -1240,19 +1370,16 @@ export default function App() {
               compacting: compactingNodeIds.has(node.id),
               actionPreviewActive: actionPreviewNodeIds.has(node.id),
               actionPreviewStyle,
-              elaboratedSelections: mergedHighlights,
+              elaboratedSelections: node.data.elaboratedSelections ?? [],
               sizingSignature: nodeSizingSignature,
               layer: structure.meta.get(node.id)?.layer ?? 0,
               siblingOrder: structure.meta.get(node.id)?.siblingOrder ?? 0,
               variantLocked: assistantWithBranch.has(node.id) || node.data.variantLocked === true,
               onCycleVariant: cycleVariant,
               onApproveVariant: approveVariant,
-          onSelectElaboration: (nodeId: string, text: string, occurrence: number, x: number, y: number) => {
-            setElaborateAction({ nodeId, role: node.data.role, text, occurrence, x, y });
-          },
-          onOpenPanel: (nodeId: string) => {
-            if (panelOpen && panelAnchorNodeId === nodeId) {
-              setPanelOpen(false);
+              onOpenPanel: (nodeId: string) => {
+                if (panelOpen && panelAnchorNodeId === nodeId) {
+                  setPanelOpen(false);
                   setPanelAnchorNodeId(null);
                   return;
                 }
@@ -1297,7 +1424,6 @@ export default function App() {
       return baseNodes;
     },
     [
-      elaborateAction,
       assistantWithBranch,
       approveVariant,
       actionPreviewNodeIds,
@@ -1566,6 +1692,7 @@ export default function App() {
             fitViewOptions={FIT_VIEW_OPTIONS}
             minZoom={MIN_ZOOM}
             maxZoom={MAX_ZOOM}
+            nodesFocusable={false}
             nodesDraggable={!fixedMode}
             panOnDrag
             zoomOnScroll={!wheelHoverActive}
@@ -1705,15 +1832,16 @@ export default function App() {
       <ElaborateButton
         action={elaborateAction}
         onElaborateClick={(action) => {
-          const nextNodes = addElaboratedSelection(action.nodeId, action.text, action.occurrence ?? 0);
-          nodesRef.current = nextNodes;
           setSelectedNode(action.nodeId);
           void sendContinue("elaboration", action.text);
         }}
         onReviseClick={(action) => {
           void handleReviseSelectedText(action);
         }}
-        onClose={() => setElaborateAction(null)}
+        onClose={() => {
+          preservedSelectionRangeRef.current = null;
+          setElaborateAction(null);
+        }}
       />
 
       <WheelModeBanner

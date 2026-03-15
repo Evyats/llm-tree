@@ -4,7 +4,6 @@ import type { ActionPreviewKind, ActionPreviewStyle } from "./actionPreview";
 export interface NodeUiCallbacks {
   onCycleVariant?: (nodeId: string, direction: -1 | 1) => void;
   onApproveVariant?: (nodeId: string) => void;
-  onSelectElaboration?: (nodeId: string, text: string, occurrence: number, x: number, y: number) => void;
   onOpenPanel?: (nodeId: string) => void;
   onDeleteBranch?: (nodeId: string) => void;
   onExtractPath?: (nodeId: string) => void;

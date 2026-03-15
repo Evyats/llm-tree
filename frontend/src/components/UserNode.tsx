@@ -5,7 +5,6 @@ import type { GraphNodeUiData } from "../features/graph/nodeUi";
 import { getActionPreviewClasses } from "../features/graph/actionPreview";
 import { NODE_TEXT_PREVIEW_MAX_HEIGHT_PX } from "../features/graph/nodeTextPreview";
 import { estimateNodeFrame } from "../features/layout/nodeSizing";
-import { normalizeSelectionToWordBoundariesDetailed } from "../features/selection/normalizeSelection";
 import NodeHeaderRow from "./common/NodeHeaderRow";
 import NodeActionButton from "./common/NodeActionButton";
 import MarkdownPreview from "./common/MarkdownPreview";
@@ -20,27 +19,6 @@ function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
   const baseWidth = size.width;
   const contentWidth = size.contentWidth;
   const actionPreviewClass = getActionPreviewClasses(!!data.actionPreviewActive, data.actionPreviewStyle ?? "outline");
-
-  const handleMouseUp = (event: MouseEvent) => {
-    if (event.button !== 0) {
-      return;
-    }
-    requestAnimationFrame(() => {
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        return;
-      }
-      if (!contentRef.current || !contentRef.current.contains(selection.anchorNode)) {
-        return;
-      }
-      const normalized = normalizeSelectionToWordBoundariesDetailed(selection, contentRef.current);
-      if (!normalized) {
-        return;
-      }
-      const rect = selection.getRangeAt(0).getBoundingClientRect();
-      data.onSelectElaboration?.(id, normalized.text, normalized.occurrence, rect.left + rect.width / 2, rect.top);
-    });
-  };
 
   const stopActionPointer = (event: MouseEvent | PointerEvent) => {
     if (event.button === 0) {
@@ -84,7 +62,19 @@ function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
             <div
               ref={contentRef}
               data-node-text-content="true"
+              data-node-id={id}
+              data-node-role={data.role}
+              onMouseDownCapture={(event) => {
+                if (event.button === 0) {
+                  event.stopPropagation();
+                }
+              }}
               onMouseDown={(event) => {
+                if (event.button === 0) {
+                  event.stopPropagation();
+                }
+              }}
+              onPointerDownCapture={(event) => {
                 if (event.button === 0) {
                   event.stopPropagation();
                 }
@@ -94,7 +84,17 @@ function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
                   event.stopPropagation();
                 }
               }}
-              onMouseUp={handleMouseUp}
+              onMouseUpCapture={(event) => {
+                if (event.button === 0) {
+                  event.stopPropagation();
+                }
+              }}
+              onClickCapture={(event) => {
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
               className="nodrag nopan cursor-text select-text text-sm leading-relaxed text-ink"
               style={
                 data.textExpandable && !data.textExpanded
@@ -131,7 +131,7 @@ function UserNode({ id, data, selected }: NodeProps<GraphNodeUiData>) {
               data-node-action-button="true"
               className={`nodrag nopan flex h-7 w-7 items-center justify-center rounded ${
                 data.panelActive
-                  ? "bg-warm/15 text-warm shadow-[inset_0_1px_3px_rgba(0,0,0,0.18)]"
+                  ? "bg-accent/15 text-accent shadow-[inset_0_1px_3px_rgba(0,0,0,0.18)]"
                   : "text-stone-700 hover:bg-stone-100"
               }`}
               onMouseDown={stopActionPointer}
